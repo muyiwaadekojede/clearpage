@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getBrowser } from '@/lib/browser';
+import { getBrowser, getBrowserRuntimeState } from '@/lib/browser';
 
 type CheckResult = {
   ok: boolean;
@@ -82,5 +82,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     vercel: Boolean(process.env.VERCEL),
     checks,
     browserLaunch,
+    browserState: getBrowserRuntimeState(),
   });
 }
