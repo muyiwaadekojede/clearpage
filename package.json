@@ -1,0 +1,43 @@
+{
+  "name": "clearpage",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "e2e:extract": "node scripts/e2e-extract.mjs",
+    "e2e:export": "node scripts/e2e-export.mjs",
+    "e2e:feedback": "node scripts/e2e-feedback.mjs",
+    "e2e:ui": "node scripts/e2e-ui.mjs",
+    "e2e:full": "npm run e2e:extract && npm run e2e:export && npm run e2e:feedback && npm run e2e:ui",
+    "e2e:brand-matrix": "node scripts/e2e-brand-matrix.mjs"
+  },
+  "dependencies": {
+    "next": "^16.2.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "@mozilla/readability": "^0.6.0",
+    "jsdom": "^29.0.2",
+    "turndown": "^7.2.4",
+    "docx": "^9.5.0",
+    "isomorphic-dompurify": "^3.9.0",
+    "playwright": "^1.59.1",
+    "better-sqlite3": "^12.9.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/jsdom": "^21.0.0",
+    "@types/turndown": "^5.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "tailwindcss": "^4.2.3",
+    "@tailwindcss/postcss": "^4.2.3",
+    "postcss": "^8.5.0"
+  }
+}
