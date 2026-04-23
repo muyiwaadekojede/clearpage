@@ -11,42 +11,100 @@ type AdminCredentials = {
 
 const ADMIN_COOKIE_NAME = 'clearpage_admin';
 const ADMIN_SESSION_TTL_SECONDS = 60 * 60 * 12;
-const credentialsDir = path.join(process.cwd(), 'secrets');
-const credentialsPath = path.join(credentialsDir, 'admin-credentials.json');
+
+let inMemoryCredentials: AdminCredentials | null = null;
+
+function resolveCredentialsDir(): string {
+  const custom = process.env.CLEARPAGE_SECRETS_DIR?.trim();
+  if (custom) return custom;
+
+  if (process.env.VERCEL) {
+    return path.join('/tmp', 'clearpage-secrets');
+  }
+
+  return path.join(process.cwd(), 'secrets');
+}
+
+function getCredentialsPath(): string {
+  return path.join(resolveCredentialsDir(), 'admin-credentials.json');
+}
 
 function randomToken(length: number): string {
   return crypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length);
 }
 
+function buildGeneratedCredentials(): AdminCredentials {
+  return {
+    username: `admin_${randomToken(10)}`,
+    password: randomToken(24),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function readCredentialsFromEnv(): AdminCredentials | null {
+  const username = process.env.CLEARPAGE_ADMIN_USERNAME?.trim();
+  const password = process.env.CLEARPAGE_ADMIN_PASSWORD?.trim();
+
+  if (!username || !password) return null;
+
+  return {
+    username,
+    password,
+    createdAt: process.env.CLEARPAGE_ADMIN_CREATED_AT || new Date().toISOString(),
+  };
+}
+
 function ensureCredentialsFile(): void {
-  if (!fs.existsSync(credentialsDir)) {
-    fs.mkdirSync(credentialsDir, { recursive: true });
+  if (readCredentialsFromEnv()) {
+    return;
   }
 
-  if (!fs.existsSync(credentialsPath)) {
-    const initial: AdminCredentials = {
-      username: `admin_${randomToken(10)}`,
-      password: randomToken(24),
-      createdAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(credentialsPath, JSON.stringify(initial, null, 2), 'utf8');
+  const credentialsDir = resolveCredentialsDir();
+  const credentialsPath = getCredentialsPath();
+
+  try {
+    if (!fs.existsSync(credentialsDir)) {
+      fs.mkdirSync(credentialsDir, { recursive: true });
+    }
+
+    if (!fs.existsSync(credentialsPath)) {
+      fs.writeFileSync(credentialsPath, JSON.stringify(buildGeneratedCredentials(), null, 2), 'utf8');
+    }
+  } catch (error) {
+    console.error('Admin credentials file initialization failed, using in-memory credentials:', error);
+    if (!inMemoryCredentials) {
+      inMemoryCredentials = buildGeneratedCredentials();
+    }
   }
 }
 
 function readCredentials(): AdminCredentials {
+  const envCredentials = readCredentialsFromEnv();
+  if (envCredentials) return envCredentials;
+
   ensureCredentialsFile();
-  const raw = fs.readFileSync(credentialsPath, 'utf8');
-  const parsed = JSON.parse(raw) as Partial<AdminCredentials>;
+  const credentialsPath = getCredentialsPath();
 
-  if (!parsed.username || !parsed.password) {
-    throw new Error('Invalid admin credentials file: missing username/password.');
+  try {
+    const raw = fs.readFileSync(credentialsPath, 'utf8');
+    const parsed = JSON.parse(raw) as Partial<AdminCredentials>;
+
+    if (!parsed.username || !parsed.password) {
+      throw new Error('Invalid admin credentials file: missing username/password.');
+    }
+
+    return {
+      username: String(parsed.username),
+      password: String(parsed.password),
+      createdAt: parsed.createdAt ? String(parsed.createdAt) : new Date().toISOString(),
+    };
+  } catch (error) {
+    console.error('Failed reading admin credentials file, using in-memory credentials:', error);
+    if (!inMemoryCredentials) {
+      inMemoryCredentials = buildGeneratedCredentials();
+    }
+    return inMemoryCredentials;
   }
-
-  return {
-    username: String(parsed.username),
-    password: String(parsed.password),
-    createdAt: parsed.createdAt ? String(parsed.createdAt) : new Date().toISOString(),
-  };
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -113,7 +171,7 @@ function buildCookie(value: string, maxAgeSeconds: number): string {
 
 export function getAdminCredentialsPath(): string {
   ensureCredentialsFile();
-  return credentialsPath;
+  return getCredentialsPath();
 }
 
 export function getAdminCredentials(): AdminCredentials {

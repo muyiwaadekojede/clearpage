@@ -2,14 +2,40 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-const dataDir = path.join(process.cwd(), 'data');
+function resolveDataDir(): string {
+  const custom = process.env.CLEARPAGE_DATA_DIR?.trim();
+  if (custom) return custom;
 
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+  if (process.env.VERCEL) {
+    return path.join('/tmp', 'clearpage-data');
+  }
+
+  return path.join(process.cwd(), 'data');
 }
 
-const db = new Database(path.join(dataDir, 'clearpage.db'));
-db.pragma('journal_mode = WAL');
+function openDatabase(): Database.Database {
+  const dataDir = resolveDataDir();
+  const filePath = path.join(dataDir, 'clearpage.db');
+
+  try {
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+
+    const fileDb = new Database(filePath);
+    try {
+      fileDb.pragma('journal_mode = WAL');
+    } catch {
+      // Some runtimes/filesystems do not support WAL.
+    }
+    return fileDb;
+  } catch (error) {
+    console.error('Database file initialization failed, falling back to in-memory DB:', error);
+    return new Database(':memory:');
+  }
+}
+
+const db = openDatabase();
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (
