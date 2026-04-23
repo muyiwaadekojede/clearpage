@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { getBrowser } from '@/lib/browser';
 
 type CheckResult = {
   ok: boolean;
@@ -53,6 +54,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }),
   };
 
+  let browserLaunch: CheckResult = { ok: false, detail: 'not-run' };
+  try {
+    const browser = await getBrowser();
+    if (!browser) {
+      browserLaunch = { ok: false, detail: 'getBrowser returned null' };
+    } else {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.setContent('<html><body><p>probe</p></body></html>');
+      await page.pdf({ format: 'A4' });
+      await context.close();
+      browserLaunch = { ok: true, detail: 'ok' };
+    }
+  } catch (error) {
+    browserLaunch = {
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+
   return res.status(200).json({
     success: true,
     nodeVersion: process.version,
@@ -60,5 +81,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     arch: process.arch,
     vercel: Boolean(process.env.VERCEL),
     checks,
+    browserLaunch,
   });
 }
