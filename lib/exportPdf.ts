@@ -109,6 +109,9 @@ export async function exportPdfBuffer(params: {
   settings: ReaderSettings;
 }): Promise<Buffer> {
   const browser = await getBrowser();
+  if (!browser) {
+    throw new Error('PDF export engine is unavailable in this runtime.');
+  }
   const context = await browser.newContext();
 
   try {

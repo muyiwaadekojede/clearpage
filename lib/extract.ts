@@ -159,6 +159,45 @@ function parseJsonImageCandidates(raw: string | null): string[] {
   }
 }
 
+async function fetchHtmlWithTimeout(url: string, timeoutMs: number): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      },
+    });
+
+    if (!response.ok) {
+      throw new ExtractPipelineError(
+        'FETCH_FAILED',
+        `Failed to reach URL (HTTP ${response.status}).`,
+      );
+    }
+
+    return await response.text();
+  } catch (error) {
+    const maybeError = error as { name?: string };
+
+    if (maybeError?.name === 'AbortError') {
+      throw new ExtractPipelineError('TIMEOUT', 'The page took too long to load.');
+    }
+
+    if (error instanceof ExtractPipelineError) {
+      throw error;
+    }
+
+    throw new ExtractPipelineError('FETCH_FAILED', 'Could not fetch the target URL.');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function pickBestImageSource(candidates: string[]): string | null {
   if (candidates.length === 0) return null;
 
@@ -359,18 +398,25 @@ async function buildImageVariants(
 }
 
 async function fetchRenderedHtml(url: string): Promise<string> {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-    locale: 'en-US',
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    extraHTTPHeaders: {
-      'accept-language': 'en-US,en;q=0.9',
-    },
-  });
+  let context: any = null;
 
   try {
+    const browser = await getBrowser();
+
+    if (!browser) {
+      return await fetchHtmlWithTimeout(url, 30_000);
+    }
+
+    context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      locale: 'en-US',
+      userAgent:
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      extraHTTPHeaders: {
+        'accept-language': 'en-US,en;q=0.9',
+      },
+    });
+
     const page = await context.newPage();
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
@@ -399,9 +445,12 @@ async function fetchRenderedHtml(url: string): Promise<string> {
       throw new ExtractPipelineError('TIMEOUT', 'The page took too long to load.');
     }
 
-    throw new ExtractPipelineError('FETCH_FAILED', 'Could not fetch the target URL.');
+    // Fallback for serverless environments where browser launch/context may fail.
+    return await fetchHtmlWithTimeout(url, 30_000);
   } finally {
-    await context.close();
+    if (context) {
+      await context.close();
+    }
   }
 }
 
