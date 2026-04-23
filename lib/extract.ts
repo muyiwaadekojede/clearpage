@@ -25,6 +25,14 @@ const RENDER_ERROR_MARKERS = [
   'error loading story',
 ];
 
+const BOT_CHALLENGE_MARKERS = [
+  '__cf_chl_tk',
+  'challenge-platform',
+  'cf-browser-verification',
+  'just a moment...',
+  'checking your browser before accessing',
+];
+
 const IMAGE_EXTENSION_MIME: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -107,8 +115,73 @@ function isLikelyPlaceholder(src: string): boolean {
     lowered.startsWith('data:image/gif;base64,r0lgod') ||
     lowered.includes('spacer') ||
     lowered.includes('pixel') ||
+    lowered.includes('placeholder') ||
+    lowered.includes('blur') ||
+    /\.max-\d+x\d+\./i.test(lowered) ||
     lowered === '#'
   );
+}
+
+function extractWidthHintFromUrl(url: string): number {
+  const patterns = [
+    /[._-]width-(\d{2,5})\b/i,
+    /[?&]w=(\d{2,5})\b/i,
+    /[._-](\d{2,5})x(\d{2,5})\b/i,
+    /[._-]max-(\d{2,5})x(\d{2,5})\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (!match) continue;
+    const width = Number(match[1] || 0);
+    if (Number.isFinite(width) && width > 0) return width;
+  }
+
+  return 0;
+}
+
+function parseJsonImageCandidates(raw: string | null): string[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return [];
+
+    const urls: string[] = [];
+    for (const value of Object.values(parsed as Record<string, unknown>)) {
+      if (typeof value === 'string' && value.trim()) {
+        urls.push(value.trim());
+      }
+    }
+    return urls;
+  } catch {
+    return [];
+  }
+}
+
+function pickBestImageSource(candidates: string[]): string | null {
+  if (candidates.length === 0) return null;
+
+  const scored = candidates.map((candidate, index) => {
+    const lowered = candidate.toLowerCase();
+    let score = extractWidthHintFromUrl(candidate);
+
+    if (isLikelyPlaceholder(candidate)) {
+      score -= 10_000;
+    }
+
+    if (lowered.includes('desktop')) {
+      score += 500;
+    }
+
+    // Prefer earlier candidates when quality signals are equal.
+    score += Math.max(0, 100 - index);
+
+    return { candidate, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.candidate || null;
 }
 
 function resolveImageSource(img: Element): string | null {
@@ -126,9 +199,17 @@ function resolveImageSource(img: Element): string | null {
     .map((value) => value?.trim() || '')
     .filter(Boolean);
 
-  const primary = !isLikelyPlaceholder(src) ? src : '';
-  const first = primary || srcset || dataSrcset || altSources[0] || '';
-  return first || null;
+  const jsonSources = [
+    ...parseJsonImageCandidates(img.getAttribute('data-loading')),
+    ...parseJsonImageCandidates(img.getAttribute('data-image')),
+    ...parseJsonImageCandidates(img.getAttribute('data-sources')),
+  ];
+
+  const candidates = [dataSrcset, srcset, ...jsonSources, ...altSources, src]
+    .map((value) => value?.trim() || '')
+    .filter(Boolean);
+
+  return pickBestImageSource(Array.from(new Set(candidates)));
 }
 
 function detectImageMime(
@@ -237,6 +318,16 @@ async function processImages(
         const dataUri = `data:${mime};base64,${bytes.toString('base64')}`;
 
         img.setAttribute('src', dataUri);
+        img.removeAttribute('srcset');
+        img.removeAttribute('data-srcset');
+        img.removeAttribute('data-loading');
+        img.removeAttribute('data-image');
+        img.removeAttribute('data-sources');
+        img.removeAttribute('data-src');
+        img.removeAttribute('data-original');
+        img.removeAttribute('data-lazy-src');
+        img.removeAttribute('data-url');
+        img.removeAttribute('data-hi-res-src');
         embeddedImages += 1;
       } catch {
         img.insertAdjacentHTML('afterend', buildImageCaption(img.getAttribute('alt')));
@@ -248,6 +339,23 @@ async function processImages(
   } finally {
     dom.window.close();
   }
+}
+
+async function buildImageVariants(
+  html: string,
+  sourceUrl: string,
+): Promise<{
+  on: { content: string; totalImages: number; embeddedImages: number };
+  off: { content: string; totalImages: number; embeddedImages: number };
+  captions: { content: string; totalImages: number; embeddedImages: number };
+}> {
+  const [on, off, captions] = await Promise.all([
+    processImages(html, 'on', sourceUrl),
+    processImages(html, 'off', sourceUrl),
+    processImages(html, 'captions', sourceUrl),
+  ]);
+
+  return { on, off, captions };
 }
 
 async function fetchRenderedHtml(url: string): Promise<string> {
@@ -354,14 +462,27 @@ function hasRenderErrorSignals(textContent: string, html: string): boolean {
   return RENDER_ERROR_MARKERS.some((marker) => haystack.includes(marker));
 }
 
-function deriveMediumCustomDomainUrl(inputUrl: URL): string | null {
-  if (!inputUrl.hostname.endsWith('.medium.com')) return null;
+function hasBotChallengeSignals(html: string): boolean {
+  const haystack = html.toLowerCase();
+  return BOT_CHALLENGE_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+function deriveMediumCustomDomainUrls(inputUrl: URL): string[] {
+  if (!inputUrl.hostname.endsWith('.medium.com')) return [];
 
   const publication = inputUrl.hostname.replace(/\.medium\.com$/i, '').trim();
-  if (!publication || publication.includes('.')) return null;
+  if (!publication || publication.includes('.')) return [];
 
   const path = `${inputUrl.pathname}${inputUrl.search || ''}${inputUrl.hash || ''}`;
-  return `https://${publication}.com${path}`;
+  const base = `https://${publication}.com`;
+  const candidates = [new URL(path, base).toString()];
+
+  if (!inputUrl.pathname.endsWith('/')) {
+    const withSlashPath = `${inputUrl.pathname}/${inputUrl.search || ''}${inputUrl.hash || ''}`;
+    candidates.unshift(new URL(withSlashPath, base).toString());
+  }
+
+  return Array.from(new Set(candidates));
 }
 
 export async function extractFromUrl(url: string, images: ImageMode): Promise<ExtractResponse> {
@@ -385,19 +506,28 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
     };
   }
 
-  const mediumCustomDomainUrl = deriveMediumCustomDomainUrl(parsedUrl);
-  if (mediumCustomDomainUrl) {
-    const customDomainResult = await extractFromUrl(mediumCustomDomainUrl, images);
-    if (customDomainResult.success) {
-      return {
-        ...customDomainResult,
-        sourceUrl: parsedUrl.toString(),
-      };
+  const mediumCustomDomainUrls = deriveMediumCustomDomainUrls(parsedUrl);
+  if (mediumCustomDomainUrls.length > 0) {
+    for (const candidate of mediumCustomDomainUrls) {
+      const customDomainResult = await extractFromUrl(candidate, images);
+      if (customDomainResult.success) {
+        return {
+          ...customDomainResult,
+          sourceUrl: parsedUrl.toString(),
+        };
+      }
     }
   }
 
   try {
     let html = await fetchRenderedHtml(parsedUrl.toString());
+    if (hasBotChallengeSignals(html)) {
+      return {
+        success: false,
+        errorCode: 'FETCH_FAILED',
+        errorMessage: 'This URL could not be reached. It may be offline, private, or blocking automated requests.',
+      };
+    }
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const dom = new JSDOM(html, { url: parsedUrl.toString() });
@@ -449,8 +579,13 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
         }
 
         const cleanHtml = sanitizeHtml(article.content || '');
-        const processedImages = await processImages(cleanHtml, images, parsedUrl.toString());
-        const finalizedHtml = sanitizeHtml(processedImages.content);
+        const variants = await buildImageVariants(cleanHtml, parsedUrl.toString());
+        const finalizedVariants = {
+          on: sanitizeHtml(variants.on.content),
+          off: sanitizeHtml(variants.off.content),
+          captions: sanitizeHtml(variants.captions.content),
+        };
+        const imageCount = variants.on.totalImages;
 
         return {
           success: true,
@@ -464,10 +599,11 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
           publishedTime: normalizeExtractText((article as { publishedTime?: string }).publishedTime) || 'Unknown',
           excerpt: normalizeExtractText(article.excerpt) || '',
           lang: normalizeExtractText((article as { lang?: string }).lang) || 'Unknown',
-          content: finalizedHtml,
+          content: finalizedVariants[images],
+          contentVariants: finalizedVariants,
           textContent,
           wordCount,
-          imageCount: processedImages.totalImages,
+          imageCount,
           sourceUrl: parsedUrl.toString(),
         };
       } finally {

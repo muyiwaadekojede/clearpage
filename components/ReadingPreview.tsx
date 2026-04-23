@@ -1,8 +1,5 @@
 'use client';
 
-import DOMPurify from 'isomorphic-dompurify';
-import { useMemo } from 'react';
-
 import type { ReaderSettings } from '@/lib/types';
 
 function fontFamily(fontFace: ReaderSettings['fontFace']): string {
@@ -18,7 +15,6 @@ type ReadingPreviewProps = {
 };
 
 export function ReadingPreview({ content, settings }: ReadingPreviewProps) {
-  const safeHtml = useMemo(() => DOMPurify.sanitize(content), [content]);
   const themeClass = `theme-${settings.colorTheme}`;
 
   return (
@@ -31,7 +27,7 @@ export function ReadingPreview({ content, settings }: ReadingPreviewProps) {
             fontSize: `${settings.fontSize}px`,
             lineHeight: settings.lineSpacing,
           }}
-          dangerouslySetInnerHTML={{ __html: safeHtml }}
+          dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>
     </section>

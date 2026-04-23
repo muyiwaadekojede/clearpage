@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+import { trackAnalyticsEvent } from '@/lib/analytics';
 import { extractFromUrl } from '@/lib/extract';
 import { extractRateLimiter } from '@/lib/rateLimit';
 import type { ExtractResponse, ImageMode } from '@/lib/types';
@@ -30,21 +31,49 @@ export default async function handler(
 
   const ip = getIp(req);
   const rate = extractRateLimiter.consume(ip);
+  const body = req.body as { url?: string; images?: ImageMode };
+
+  trackAnalyticsEvent(req, {
+    eventName: 'api_extract_request',
+    eventGroup: 'extract',
+    status: 'attempt',
+    pagePath: '/',
+    attemptedUrl: body?.url ?? null,
+    metadata: {
+      images: body?.images ?? 'on',
+      rateRemaining: rate.remaining,
+    },
+  });
 
   res.setHeader('X-RateLimit-Limit', '10');
   res.setHeader('X-RateLimit-Remaining', String(rate.remaining));
   res.setHeader('X-RateLimit-Reset', String(Math.ceil(rate.resetAt / 1000)));
 
   if (!rate.allowed) {
+    trackAnalyticsEvent(req, {
+      eventName: 'api_extract_result',
+      eventGroup: 'extract',
+      status: 'failure',
+      pagePath: '/',
+      attemptedUrl: body?.url ?? null,
+      errorCode: 'RATE_LIMIT',
+      errorMessage: 'Too many extraction requests. Try again in a minute.',
+    });
     return res.status(429).json({
       success: false,
       errorMessage: 'Too many extraction requests. Try again in a minute.',
     });
   }
 
-  const body = req.body as { url?: string; images?: ImageMode };
-
   if (!body?.url || typeof body.url !== 'string') {
+    trackAnalyticsEvent(req, {
+      eventName: 'api_extract_result',
+      eventGroup: 'extract',
+      status: 'failure',
+      pagePath: '/',
+      errorCode: 'INVALID_INPUT',
+      errorMessage: 'Missing required field: url.',
+    });
     return res.status(400).json({
       success: false,
       errorMessage: 'Missing required field: url.',
@@ -58,8 +87,36 @@ export default async function handler(
   const result = await extractFromUrl(body.url, images);
 
   if (!result.success) {
+    trackAnalyticsEvent(req, {
+      eventName: 'api_extract_result',
+      eventGroup: 'extract',
+      status: 'failure',
+      pagePath: '/',
+      attemptedUrl: body.url,
+      errorCode: result.errorCode,
+      errorMessage: result.errorMessage,
+      metadata: {
+        images,
+      },
+    });
     return res.status(400).json(result);
   }
+
+  trackAnalyticsEvent(req, {
+    eventName: 'api_extract_result',
+    eventGroup: 'extract',
+    status: 'success',
+    pagePath: '/',
+    attemptedUrl: body.url,
+    sourceUrl: result.sourceUrl,
+    metadata: {
+      images,
+      wordCount: result.wordCount,
+      imageCount: result.imageCount,
+      title: result.title,
+      siteName: result.siteName,
+    },
+  });
 
   return res.status(200).json(result);
 }

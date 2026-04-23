@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { FailureModal } from '@/components/FailureModal';
 import { ProgressIndicator } from '@/components/ProgressIndicator';
 import { ReadingPreview } from '@/components/ReadingPreview';
 import { SettingsSidebar } from '@/components/SettingsSidebar';
 import { UrlInput } from '@/components/UrlInput';
+import { getClientSessionId, trackClientEvent } from '@/lib/clientAnalytics';
 import type {
   ExportFormat,
   ExtractErrorCode,
@@ -19,28 +20,6 @@ type FailureState = {
   errorCode: ExtractErrorCode;
   url: string;
 };
-
-function applyImageModeToHtml(content: string, imageMode: ImageMode): string {
-  if (imageMode === 'on') return content;
-
-  const parser = new DOMParser();
-  const document = parser.parseFromString(content, 'text/html');
-  const images = Array.from(document.querySelectorAll('img'));
-
-  if (imageMode === 'off') {
-    for (const img of images) img.remove();
-    return document.body.innerHTML;
-  }
-
-  for (const img of images) {
-    const em = document.createElement('em');
-    const alt = img.getAttribute('alt')?.trim() || 'image unavailable';
-    em.textContent = `[Image: ${alt}]`;
-    img.replaceWith(em);
-  }
-
-  return document.body.innerHTML;
-}
 
 function initialThemeFromSystem(): ReaderSettings['colorTheme'] {
   if (typeof window === 'undefined') return 'light';
@@ -63,19 +42,60 @@ export default function Page() {
   const [result, setResult] = useState<ExtractSuccessResponse | null>(null);
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
+  const sessionIdRef = useRef<string>('');
 
   useEffect(() => {
     setSettings((current) => ({ ...current, colorTheme: initialThemeFromSystem() }));
+
+    sessionIdRef.current = getClientSessionId();
+    void trackClientEvent({
+      eventName: 'page_view',
+      eventGroup: 'navigation',
+      status: 'success',
+      pagePath: '/',
+      metadata: {
+        href: window.location.href,
+      },
+    });
   }, []);
 
   const transformedContent = useMemo(() => {
     if (!result) return '';
-    return applyImageModeToHtml(result.content, images);
+    return result.contentVariants[images] || result.content;
   }, [images, result]);
+
+  function buildHeaders(): HeadersInit {
+    return {
+      'Content-Type': 'application/json',
+      ...(sessionIdRef.current ? { 'x-clearpage-session': sessionIdRef.current } : {}),
+    };
+  }
 
   async function handleExtract(): Promise<void> {
     const targetUrl = url.trim();
-    if (!targetUrl) return;
+
+    if (!targetUrl) {
+      void trackClientEvent({
+        eventName: 'extract_submit',
+        eventGroup: 'extract',
+        status: 'failure',
+        pagePath: '/',
+        errorCode: 'EMPTY_URL',
+        errorMessage: 'User attempted extract without a URL.',
+      });
+      return;
+    }
+
+    void trackClientEvent({
+      eventName: 'extract_submit',
+      eventGroup: 'extract',
+      status: 'attempt',
+      pagePath: '/',
+      attemptedUrl: targetUrl,
+      metadata: {
+        images,
+      },
+    });
 
     setExtracting(true);
     setFailure(null);
@@ -88,8 +108,8 @@ export default function Page() {
     try {
       const response = await fetch('/api/extract', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: targetUrl, images: 'on' }),
+        headers: buildHeaders(),
+        body: JSON.stringify({ url: targetUrl, images }),
       });
 
       const json = (await response.json()) as
@@ -98,14 +118,49 @@ export default function Page() {
 
       if (!response.ok || !json.success) {
         const errorCode = (json as { errorCode?: ExtractErrorCode }).errorCode || 'EXTRACTION_FAILED';
+
+        void trackClientEvent({
+          eventName: 'extract_result',
+          eventGroup: 'extract',
+          status: 'failure',
+          pagePath: '/',
+          attemptedUrl: targetUrl,
+          errorCode,
+          errorMessage: (json as { errorMessage?: string }).errorMessage,
+        });
+
         setFailure({ errorCode, url: targetUrl });
         setResult(null);
         return;
       }
 
+      void trackClientEvent({
+        eventName: 'extract_result',
+        eventGroup: 'extract',
+        status: 'success',
+        pagePath: '/',
+        attemptedUrl: targetUrl,
+        sourceUrl: json.sourceUrl,
+        metadata: {
+          title: json.title,
+          siteName: json.siteName,
+          wordCount: json.wordCount,
+          imageCount: json.imageCount,
+        },
+      });
+
       setProgressStep(3);
       setResult(json);
     } catch (error) {
+      void trackClientEvent({
+        eventName: 'extract_result',
+        eventGroup: 'extract',
+        status: 'failure',
+        pagePath: '/',
+        attemptedUrl: targetUrl,
+        errorCode: 'CLIENT_REQUEST_ERROR',
+        errorMessage: error instanceof Error ? error.message : 'Client extraction request failed.',
+      });
       console.error(error);
       setFailure({ errorCode: 'EXTRACTION_FAILED', url: targetUrl });
       setResult(null);
@@ -118,12 +173,24 @@ export default function Page() {
   async function handleExport(format: ExportFormat): Promise<void> {
     if (!result) return;
 
+    void trackClientEvent({
+      eventName: 'export_submit',
+      eventGroup: 'export',
+      status: 'attempt',
+      pagePath: '/',
+      sourceUrl: result.sourceUrl,
+      exportFormat: format,
+      metadata: {
+        title: result.title,
+      },
+    });
+
     setExporting((current) => ({ ...current, [format]: true }));
 
     try {
       const response = await fetch('/api/export', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildHeaders(),
         body: JSON.stringify({
           format,
           content: transformedContent,
@@ -138,7 +205,8 @@ export default function Page() {
       });
 
       if (!response.ok) {
-        throw new Error(`Export failed (${format}).`);
+        const raw = await response.text();
+        throw new Error(raw || `Export failed (${format}).`);
       }
 
       const blob = await response.blob();
@@ -153,10 +221,70 @@ export default function Page() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(objectUrl);
+
+      void trackClientEvent({
+        eventName: 'export_result',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl: result.sourceUrl,
+        exportFormat: format,
+        metadata: {
+          filename,
+        },
+      });
     } catch (error) {
+      void trackClientEvent({
+        eventName: 'export_result',
+        eventGroup: 'export',
+        status: 'failure',
+        pagePath: '/',
+        sourceUrl: result.sourceUrl,
+        exportFormat: format,
+        errorCode: 'CLIENT_EXPORT_ERROR',
+        errorMessage: error instanceof Error ? error.message : `Export failed (${format}).`,
+      });
       console.error(error);
     } finally {
       setExporting((current) => ({ ...current, [format]: false }));
+    }
+  }
+
+  function handleImagesChange(value: ImageMode): void {
+    setImages(value);
+    void trackClientEvent({
+      eventName: 'image_mode_changed',
+      eventGroup: 'settings',
+      status: 'success',
+      pagePath: '/',
+      metadata: {
+        value,
+      },
+    });
+  }
+
+  function handleSettingsChange(next: ReaderSettings): void {
+    const changed: Partial<Record<keyof ReaderSettings, { from: string | number; to: string | number }>> = {};
+
+    for (const key of Object.keys(next) as Array<keyof ReaderSettings>) {
+      if (settings[key] !== next[key]) {
+        changed[key] = {
+          from: settings[key],
+          to: next[key],
+        };
+      }
+    }
+
+    setSettings(next);
+
+    if (Object.keys(changed).length > 0) {
+      void trackClientEvent({
+        eventName: 'reader_settings_changed',
+        eventGroup: 'settings',
+        status: 'success',
+        pagePath: '/',
+        metadata: changed,
+      });
     }
   }
 
@@ -167,6 +295,13 @@ export default function Page() {
     setImages('on');
     setSettings((current) => ({ ...DEFAULT_SETTINGS, colorTheme: current.colorTheme }));
     setProgressStep(0);
+
+    void trackClientEvent({
+      eventName: 'new_url_clicked',
+      eventGroup: 'navigation',
+      status: 'success',
+      pagePath: '/',
+    });
   }
 
   return (
@@ -190,9 +325,9 @@ export default function Page() {
             wordCount={result.wordCount}
             imageCount={result.imageCount}
             images={images}
-            onImagesChange={setImages}
+            onImagesChange={handleImagesChange}
             settings={settings}
-            onSettingsChange={setSettings}
+            onSettingsChange={handleSettingsChange}
             onExport={(format) => void handleExport(format)}
             exporting={exporting}
             onNewUrl={resetState}
@@ -209,6 +344,17 @@ export default function Page() {
           open={true}
           errorCode={failure.errorCode}
           failedUrl={failure.url}
+          sessionId={sessionIdRef.current}
+          onSubmitted={() => {
+            void trackClientEvent({
+              eventName: 'feedback_form_submitted',
+              eventGroup: 'feedback',
+              status: 'success',
+              pagePath: '/',
+              attemptedUrl: failure.url,
+              errorCode: failure.errorCode,
+            });
+          }}
           onClose={() => setFailure(null)}
         />
       ) : null}

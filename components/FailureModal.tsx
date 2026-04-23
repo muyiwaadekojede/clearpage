@@ -30,10 +30,19 @@ type FailureModalProps = {
   open: boolean;
   errorCode: ExtractErrorCode;
   failedUrl: string;
+  sessionId?: string;
+  onSubmitted?: () => void;
   onClose: () => void;
 };
 
-export function FailureModal({ open, errorCode, failedUrl, onClose }: FailureModalProps) {
+export function FailureModal({
+  open,
+  errorCode,
+  failedUrl,
+  sessionId,
+  onSubmitted,
+  onClose,
+}: FailureModalProps) {
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [freeText, setFreeText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -49,8 +58,12 @@ export function FailureModal({ open, errorCode, failedUrl, onClose }: FailureMod
     try {
       const response = await fetch('/api/feedback', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(sessionId ? { 'x-clearpage-session': sessionId } : {}),
+        },
         body: JSON.stringify({
+          sessionId,
           failedUrl,
           errorCode,
           checkedReasons: selectedReasons,
@@ -63,6 +76,7 @@ export function FailureModal({ open, errorCode, failedUrl, onClose }: FailureMod
       }
 
       setSubmitted(true);
+      onSubmitted?.();
     } catch (error) {
       console.error(error);
     } finally {

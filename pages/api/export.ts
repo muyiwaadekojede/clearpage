@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
+import { trackAnalyticsEvent } from '@/lib/analytics';
 import { exportDocxBuffer } from '@/lib/exportDocx';
 import { buildMarkdownExport } from '@/lib/exportMarkdown';
 import { exportPdfBuffer } from '@/lib/exportPdf';
@@ -59,21 +60,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   };
 
   const format = body.format;
-
-  if (!format || !['pdf', 'txt', 'md', 'docx'].includes(format)) {
-    return res.status(400).json({ success: false, error: 'Invalid format.' });
-  }
-
-  if (!body.content || typeof body.content !== 'string') {
-    return res.status(400).json({ success: false, error: 'Missing content.' });
-  }
-
   const title = (body.title || 'Untitled Article').trim();
-  const byline = (body.byline || 'Unknown').trim();
   const sourceUrl = (body.sourceUrl || '').trim();
+  const byline = (body.byline || 'Unknown').trim();
   const siteName = (body.siteName || 'Unknown').trim();
   const publishedTime = (body.publishedTime || 'Unknown').trim();
   const textContent = (body.textContent || '').trim();
+
+  if (!format || !['pdf', 'txt', 'md', 'docx'].includes(format)) {
+    trackAnalyticsEvent(req, {
+      eventName: 'api_export_result',
+      eventGroup: 'export',
+      status: 'failure',
+      pagePath: '/',
+      errorCode: 'INVALID_FORMAT',
+      errorMessage: 'Invalid format.',
+      sourceUrl,
+    });
+    return res.status(400).json({ success: false, error: 'Invalid format.' });
+  }
+
+  trackAnalyticsEvent(req, {
+    eventName: 'api_export_request',
+    eventGroup: 'export',
+    status: 'attempt',
+    pagePath: '/',
+    sourceUrl,
+    exportFormat: format,
+    metadata: {
+      title,
+    },
+  });
+
+  if (!body.content || typeof body.content !== 'string') {
+    trackAnalyticsEvent(req, {
+      eventName: 'api_export_result',
+      eventGroup: 'export',
+      status: 'failure',
+      pagePath: '/',
+      sourceUrl,
+      exportFormat: format,
+      errorCode: 'MISSING_CONTENT',
+      errorMessage: 'Missing content.',
+    });
+    return res.status(400).json({ success: false, error: 'Missing content.' });
+  }
   const settings = normalizeSettings(body.settings);
   const filenameBase = sanitizeFilename(title);
 
@@ -88,6 +119,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.pdf"`);
+      trackAnalyticsEvent(req, {
+        eventName: 'api_export_result',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+      });
       return res.status(200).send(buffer);
     }
 
@@ -104,6 +143,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.txt"`);
+      trackAnalyticsEvent(req, {
+        eventName: 'api_export_result',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+      });
       return res.status(200).send(Buffer.from(txt, 'utf8'));
     }
 
@@ -119,6 +166,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.md"`);
+      trackAnalyticsEvent(req, {
+        eventName: 'api_export_result',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+      });
       return res.status(200).send(Buffer.from(markdown, 'utf8'));
     }
 
@@ -134,10 +189,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filenameBase}.docx"`);
+    trackAnalyticsEvent(req, {
+      eventName: 'api_export_result',
+      eventGroup: 'export',
+      status: 'success',
+      pagePath: '/',
+      sourceUrl,
+      exportFormat: format,
+    });
     return res.status(200).send(docx);
   } catch (error) {
     console.error('Export error:', error);
     const details = error instanceof Error ? error.message : 'Unknown export error';
+    trackAnalyticsEvent(req, {
+      eventName: 'api_export_result',
+      eventGroup: 'export',
+      status: 'failure',
+      pagePath: '/',
+      sourceUrl,
+      exportFormat: format,
+      errorCode: 'EXPORT_FAILED',
+      errorMessage: details,
+    });
     return res.status(500).json({
       success: false,
       error: 'Failed to generate export.',

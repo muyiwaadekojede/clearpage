@@ -13,8 +13,9 @@
     "e2e:extract": "node scripts/e2e-extract.mjs",
     "e2e:export": "node scripts/e2e-export.mjs",
     "e2e:feedback": "node scripts/e2e-feedback.mjs",
+    "e2e:analytics": "node scripts/e2e-analytics.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
-    "e2e:full": "npm run e2e:extract && npm run e2e:export && npm run e2e:feedback && npm run e2e:ui",
+    "e2e:full": "npm run e2e:extract && npm run e2e:export && npm run e2e:feedback && npm run e2e:ui && npm run e2e:analytics",
     "e2e:brand-matrix": "node scripts/e2e-brand-matrix.mjs"
   },
   "dependencies": {

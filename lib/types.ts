@@ -24,6 +24,7 @@ export interface ExtractSuccessResponse {
   excerpt: string;
   lang: string;
   content: string;
+  contentVariants: Record<ImageMode, string>;
   textContent: string;
   wordCount: number;
   imageCount: number;
