@@ -23,13 +23,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const checks: Record<string, CheckResult> = {
-    jsdom: await probeImport(() => import('jsdom')),
-    '@mozilla/readability': await probeImport(() => import('@mozilla/readability')),
-    'isomorphic-dompurify': await probeImport(() => import('isomorphic-dompurify')),
-    playwright: await probeImport(() => import('playwright')),
-    turndown: await probeImport(() => import('turndown')),
-    docx: await probeImport(() => import('docx')),
-    'better-sqlite3': await probeImport(() => import('better-sqlite3')),
+    jsdom: await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('jsdom');
+    }),
+    '@mozilla/readability': await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('@mozilla/readability');
+    }),
+    'isomorphic-dompurify': await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('isomorphic-dompurify');
+    }),
+    playwright: await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('playwright');
+    }),
+    turndown: await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('turndown');
+    }),
+    docx: await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('docx');
+    }),
+    'better-sqlite3': await probeImport(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('better-sqlite3');
+    }),
   };
 
   return res.status(200).json({

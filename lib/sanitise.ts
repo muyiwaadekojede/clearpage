@@ -1,23 +1,49 @@
-import DOMPurify from 'isomorphic-dompurify';
-
 const WINDOWS_RESERVED_CHARS = /[<>:"/\\|?*\u0000-\u001F]/g;
 const MULTI_SPACE = /\s+/g;
 const MULTI_HYPHEN = /-+/g;
 
-function maybeClearWindow(): void {
-  const clearWindow = (DOMPurify as unknown as { clearWindow?: () => void }).clearWindow;
+type DomPurifyShape = {
+  sanitize: (html: string, options?: unknown) => string;
+  clearWindow?: () => void;
+};
+
+let domPurifyRef: DomPurifyShape | null | undefined;
+
+function getDomPurify(): DomPurifyShape | null {
+  if (domPurifyRef !== undefined) {
+    return domPurifyRef;
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    domPurifyRef = require('isomorphic-dompurify') as DomPurifyShape;
+  } catch (error) {
+    console.error('DOMPurify require failed, falling back to passthrough sanitization:', error);
+    domPurifyRef = null;
+  }
+
+  return domPurifyRef;
+}
+
+function maybeClearWindow(purifier: DomPurifyShape): void {
+  const clearWindow = purifier.clearWindow;
   if (typeof clearWindow === 'function') {
     clearWindow();
   }
 }
 
 export function sanitizeHtml(html: string): string {
-  const clean = DOMPurify.sanitize(html, {
+  const purifier = getDomPurify();
+  if (!purifier) {
+    return html;
+  }
+
+  const clean = purifier.sanitize(html, {
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|ftp|tel|data):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
   });
 
-  maybeClearWindow();
+  maybeClearWindow(purifier);
   return clean;
 }
 

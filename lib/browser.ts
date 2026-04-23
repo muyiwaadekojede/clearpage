@@ -5,21 +5,30 @@ declare global {
   var __clearpageBrowser: Browser | undefined;
 }
 
-let playwrightModulePromise: Promise<typeof import('playwright') | null> | null = null;
+let playwrightModule: { chromium: { launch: (opts: { headless: boolean }) => Promise<Browser> } } | null | undefined;
 
-async function loadPlaywright(): Promise<typeof import('playwright') | null> {
-  if (!playwrightModulePromise) {
-    playwrightModulePromise = import('playwright').catch((error) => {
-      console.error('Playwright import failed:', error);
-      return null;
-    });
+function loadPlaywright():
+  | { chromium: { launch: (opts: { headless: boolean }) => Promise<Browser> } }
+  | null {
+  if (playwrightModule !== undefined) {
+    return playwrightModule;
   }
 
-  return playwrightModulePromise;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    playwrightModule = require('playwright') as {
+      chromium: { launch: (opts: { headless: boolean }) => Promise<Browser> };
+    };
+  } catch (error) {
+    console.error('Playwright require failed:', error);
+    playwrightModule = null;
+  }
+
+  return playwrightModule;
 }
 
 export async function getBrowser(): Promise<Browser | null> {
-  const playwright = await loadPlaywright();
+  const playwright = loadPlaywright();
   if (!playwright) {
     return null;
   }
