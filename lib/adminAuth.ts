@@ -50,6 +50,10 @@ function buildGeneratedCredentials(): AdminCredentials {
 }
 
 function readCredentialsFromEnv(): AdminCredentials | null {
+  if (process.env.VERCEL && process.env.CLEARPAGE_USE_ENV_ADMIN !== '1') {
+    return null;
+  }
+
   const username = process.env.CLEARPAGE_ADMIN_USERNAME?.trim();
   const password = process.env.CLEARPAGE_ADMIN_PASSWORD?.trim();
 
@@ -87,6 +91,10 @@ function ensureCredentialsFile(): void {
 }
 
 function readCredentials(): AdminCredentials {
+  if (process.env.VERCEL) {
+    return buildGeneratedCredentials();
+  }
+
   const envCredentials = readCredentialsFromEnv();
   if (envCredentials) return envCredentials;
 
