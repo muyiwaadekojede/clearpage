@@ -1,7 +1,3 @@
-import { JSDOM } from 'jsdom';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
-import type { BrowserContext } from 'playwright';
-
 import { getBrowser } from './browser';
 import { clampNumber, escapeHtml } from './sanitise';
 import type { ReaderSettings } from './types';
@@ -106,118 +102,6 @@ export function renderStyledArticleHtml(
 </html>`;
 }
 
-function buildPlainTextFromHtml(html: string): string {
-  const dom = new JSDOM(`<article>${html}</article>`);
-  const { document } = dom.window;
-  const blocks = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,code'));
-  const lines: string[] = [];
-
-  for (const block of blocks) {
-    const text = block.textContent?.trim();
-    if (!text) continue;
-    lines.push(text);
-    lines.push('');
-  }
-
-  return lines.join('\n').trim();
-}
-
-function wrapTextToWidth(
-  text: string,
-  maxWidth: number,
-  font: { widthOfTextAtSize: (text: string, size: number) => number },
-  fontSize: number,
-): string[] {
-  const paragraphs = text.split(/\n{2,}/);
-  const wrapped: string[] = [];
-
-  for (const paragraph of paragraphs) {
-    const words = paragraph.split(/\s+/).filter(Boolean);
-    if (words.length === 0) {
-      wrapped.push('');
-      continue;
-    }
-
-    let current = '';
-    for (const word of words) {
-      const candidate = current ? `${current} ${word}` : word;
-      const width = font.widthOfTextAtSize(candidate, fontSize);
-      if (width <= maxWidth || !current) {
-        current = candidate;
-      } else {
-        wrapped.push(current);
-        current = word;
-      }
-    }
-    if (current) wrapped.push(current);
-    wrapped.push('');
-  }
-
-  return wrapped;
-}
-
-async function fallbackPdfBuffer(params: {
-  content: string;
-  title: string;
-  byline: string;
-  settings: ReaderSettings;
-}): Promise<Buffer> {
-  const pdf = await PDFDocument.create();
-  pdf.setTitle(params.title || 'Untitled Article');
-  if (params.byline?.trim()) {
-    pdf.setAuthor(params.byline.trim());
-  }
-
-  const regular = await pdf.embedFont(StandardFonts.TimesRoman);
-  const bold = await pdf.embedFont(StandardFonts.TimesRomanBold);
-
-  const pageMargin = 48;
-  const pageWidth = 595.28;
-  const pageHeight = 841.89;
-  const bodySize = clampNumber(params.settings.fontSize, 12, 24);
-  const titleSize = Math.min(bodySize + 8, 30);
-  const lineHeight = bodySize * clampNumber(params.settings.lineSpacing, 1.2, 2.0);
-  const usableWidth = pageWidth - pageMargin * 2;
-
-  let page = pdf.addPage([pageWidth, pageHeight]);
-  let cursorY = pageHeight - pageMargin;
-
-  page.drawText(params.title || 'Untitled Article', {
-    x: pageMargin,
-    y: cursorY - titleSize,
-    size: titleSize,
-    font: bold,
-  });
-
-  cursorY -= titleSize + 18;
-
-  const plainText = buildPlainTextFromHtml(params.content);
-  const lines = wrapTextToWidth(plainText, usableWidth, regular, bodySize);
-
-  for (const line of lines) {
-    if (cursorY <= pageMargin + lineHeight) {
-      page = pdf.addPage([pageWidth, pageHeight]);
-      cursorY = pageHeight - pageMargin;
-    }
-
-    if (!line) {
-      cursorY -= lineHeight * 0.5;
-      continue;
-    }
-
-    page.drawText(line, {
-      x: pageMargin,
-      y: cursorY - bodySize,
-      size: bodySize,
-      font: regular,
-    });
-    cursorY -= lineHeight;
-  }
-
-  const bytes = await pdf.save();
-  return Buffer.from(bytes);
-}
-
 export async function exportPdfBuffer(params: {
   content: string;
   title: string;
@@ -225,14 +109,12 @@ export async function exportPdfBuffer(params: {
   settings: ReaderSettings;
 }): Promise<Buffer> {
   const browser = await getBrowser();
-  let context: BrowserContext | null = null;
+  if (!browser) {
+    throw new Error('PDF export engine is unavailable in this runtime.');
+  }
+  const context = await browser.newContext();
 
   try {
-    if (!browser) {
-      throw new Error('PDF export engine is unavailable in this runtime.');
-    }
-
-    context = await browser.newContext();
     const page = await context.newPage();
     const html = renderStyledArticleHtml(
       params.content,
@@ -243,7 +125,7 @@ export async function exportPdfBuffer(params: {
 
     await page.setContent(html, { waitUntil: 'networkidle' });
 
-    const buffer = await page.pdf({
+    return await page.pdf({
       format: 'A4',
       printBackground: true,
       margin: {
@@ -253,14 +135,7 @@ export async function exportPdfBuffer(params: {
         right: '48px',
       },
     });
-
-    return buffer;
-  } catch (error) {
-    console.error('Playwright PDF generation failed, using fallback:', error);
-    return fallbackPdfBuffer(params);
   } finally {
-    if (context) {
-      await context.close();
-    }
+    await context.close();
   }
 }
