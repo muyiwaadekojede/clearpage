@@ -193,12 +193,7 @@ export default function Page() {
         headers: buildHeaders(),
         body: JSON.stringify({
           format,
-          content: transformedContent,
-          textContent: result.textContent,
-          title: result.title,
-          byline: result.byline,
-          siteName: result.siteName,
-          publishedTime: result.publishedTime,
+          images,
           sourceUrl: result.sourceUrl,
           settings,
         }),

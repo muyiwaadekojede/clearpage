@@ -5,9 +5,10 @@ import { exportDocxBuffer } from '@/lib/exportDocx';
 import { buildMarkdownExport } from '@/lib/exportMarkdown';
 import { exportPdfBuffer } from '@/lib/exportPdf';
 import { buildTxtExport } from '@/lib/exportTxt';
+import { extractFromUrl } from '@/lib/extract';
 import { sanitizeFilename } from '@/lib/sanitise';
 import { clampNumber } from '@/lib/sanitise';
-import type { ExportFormat, ReaderSettings } from '@/lib/types';
+import type { ExportFormat, ImageMode, ReaderSettings } from '@/lib/types';
 
 export const config = {
   api: {
@@ -56,16 +57,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     siteName?: string;
     publishedTime?: string;
     sourceUrl?: string;
+    images?: ImageMode;
     settings?: Partial<ReaderSettings>;
   };
 
   const format = body.format;
-  const title = (body.title || 'Untitled Article').trim();
+  let title = (body.title || 'Untitled Article').trim();
   const sourceUrl = (body.sourceUrl || '').trim();
-  const byline = (body.byline || 'Unknown').trim();
-  const siteName = (body.siteName || 'Unknown').trim();
-  const publishedTime = (body.publishedTime || 'Unknown').trim();
-  const textContent = (body.textContent || '').trim();
+  let byline = (body.byline || 'Unknown').trim();
+  let siteName = (body.siteName || 'Unknown').trim();
+  let publishedTime = (body.publishedTime || 'Unknown').trim();
+  let textContent = (body.textContent || '').trim();
+  const images: ImageMode =
+    body.images === 'off' || body.images === 'captions' || body.images === 'on'
+      ? body.images
+      : 'on';
 
   if (!format || !['pdf', 'txt', 'md', 'docx'].includes(format)) {
     trackAnalyticsEvent(req, {
@@ -92,26 +98,59 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     },
   });
 
-  if (!body.content || typeof body.content !== 'string') {
-    trackAnalyticsEvent(req, {
-      eventName: 'api_export_result',
-      eventGroup: 'export',
-      status: 'failure',
-      pagePath: '/',
-      sourceUrl,
-      exportFormat: format,
-      errorCode: 'MISSING_CONTENT',
-      errorMessage: 'Missing content.',
-    });
-    return res.status(400).json({ success: false, error: 'Missing content.' });
+  let content = typeof body.content === 'string' ? body.content : '';
+
+  if (!content) {
+    if (!sourceUrl) {
+      trackAnalyticsEvent(req, {
+        eventName: 'api_export_result',
+        eventGroup: 'export',
+        status: 'failure',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+        errorCode: 'MISSING_CONTENT',
+        errorMessage: 'Missing content and source URL.',
+      });
+      return res.status(400).json({ success: false, error: 'Missing content and source URL.' });
+    }
+
+    const extracted = await extractFromUrl(sourceUrl, images);
+
+    if (!extracted.success) {
+      trackAnalyticsEvent(req, {
+        eventName: 'api_export_result',
+        eventGroup: 'export',
+        status: 'failure',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+        errorCode: extracted.errorCode,
+        errorMessage: extracted.errorMessage,
+      });
+
+      return res.status(400).json({
+        success: false,
+        error: extracted.errorMessage || 'Failed to regenerate article content for export.',
+        errorCode: extracted.errorCode,
+      });
+    }
+
+    content = extracted.content;
+    textContent = extracted.textContent;
+    title = extracted.title || title;
+    byline = extracted.byline || byline;
+    siteName = extracted.siteName || siteName;
+    publishedTime = extracted.publishedTime || publishedTime;
   }
+
   const settings = normalizeSettings(body.settings);
   const filenameBase = sanitizeFilename(title);
 
   try {
     if (format === 'pdf') {
       const buffer = await exportPdfBuffer({
-        content: body.content,
+        content,
         title,
         byline,
         settings,
@@ -137,7 +176,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sourceUrl,
         siteName,
         publishedTime,
-        content: body.content,
+        content,
         textContent,
       });
 
@@ -161,7 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sourceUrl,
         siteName,
         publishedTime,
-        content: body.content,
+        content,
       });
 
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
@@ -181,7 +220,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       title,
       byline,
       sourceUrl,
-      content: body.content,
+      content,
     });
 
     res.setHeader(

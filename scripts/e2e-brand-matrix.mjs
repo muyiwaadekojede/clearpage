@@ -90,6 +90,23 @@ async function fetchWithRetry(url, init, attempts = 3) {
   throw lastError;
 }
 
+async function readTextWithRetry(response, attempts = 3) {
+  let lastError = null;
+
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await response.clone().text();
+    } catch (error) {
+      lastError = error;
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 600 * (i + 1)));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function hasDataImages(html) {
   return /<img[^>]+src="data:image\//i.test(html);
 }
@@ -125,7 +142,7 @@ async function extractOnce(url) {
     body: JSON.stringify({ url, images: 'on' }),
   });
 
-  const raw = await response.text();
+  const raw = await readTextWithRetry(response);
   let json;
   try {
     json = JSON.parse(raw);
@@ -150,25 +167,35 @@ async function exportAllFormats(article) {
     ['md', 'text/markdown', 200],
     ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 1000],
   ];
+  const isLocalBase = /127\.0\.0\.1|localhost/i.test(BASE_URL);
 
   for (const [format, expectedType, minBytes] of formats) {
+    const payload = isLocalBase
+      ? {
+          format,
+          content: article.content,
+          textContent: article.textContent,
+          title: article.title,
+          byline: article.byline,
+          siteName: article.siteName,
+          publishedTime: article.publishedTime,
+          sourceUrl: article.sourceUrl,
+          settings,
+        }
+      : {
+          format,
+          sourceUrl: article.sourceUrl,
+          images: 'on',
+          settings,
+        };
+
     const response = await fetchWithRetry(`${BASE_URL}/api/export`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         'x-forwarded-for': nextIp(),
       },
-      body: JSON.stringify({
-        format,
-        content: article.content,
-        textContent: article.textContent,
-        title: article.title,
-        byline: article.byline,
-        siteName: article.siteName,
-        publishedTime: article.publishedTime,
-        sourceUrl: article.sourceUrl,
-        settings,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
