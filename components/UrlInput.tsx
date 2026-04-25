@@ -1,13 +1,22 @@
 'use client';
 
+import { useRef } from 'react';
+
 type UrlInputProps = {
   url: string;
   onUrlChange: (url: string) => void;
-  onSubmit: () => void;
+  onSubmit: (urlValue?: string) => void;
   loading: boolean;
 };
 
 export function UrlInput({ url, onUrlChange, onSubmit, loading }: UrlInputProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function submitCurrentUrl(): void {
+    const currentValue = inputRef.current?.value ?? url;
+    onSubmit(currentValue);
+  }
+
   return (
     <div className="cp-shell cp-enter flex min-h-screen items-center justify-center px-6 py-10">
       <div className="w-full max-w-3xl text-center">
@@ -22,6 +31,7 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading }: UrlInputProps)
           </label>
           <input
             id="url-input"
+            ref={inputRef}
             type="url"
             inputMode="url"
             placeholder="https://example.com/article"
@@ -29,14 +39,14 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading }: UrlInputProps)
             value={url}
             onChange={(event) => onUrlChange(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') onSubmit();
+              if (event.key === 'Enter') submitCurrentUrl();
             }}
             className="h-16 w-full rounded-xl border border-[var(--color-border)] bg-white/95 px-5 text-lg shadow-sm outline-none transition focus:border-[var(--color-accent)] focus:ring-4 focus:ring-[color:color-mix(in_srgb,var(--color-accent)_20%,transparent)]"
           />
 
           <button
             type="button"
-            onClick={onSubmit}
+            onClick={submitCurrentUrl}
             disabled={loading}
             className="h-16 min-w-48 rounded-xl bg-[var(--color-accent)] px-8 text-base font-semibold text-white transition hover:bg-[var(--color-accent-strong)] active:translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-70"
           >

@@ -1,8 +1,6 @@
 {
-  "installCommand": "npm install && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium",
   "buildCommand": "npm run build",
   "env": {
-    "NODE_OPTIONS": "--experimental-require-module",
-    "PLAYWRIGHT_BROWSERS_PATH": "0"
+    "NODE_OPTIONS": "--experimental-require-module"
   }
 }

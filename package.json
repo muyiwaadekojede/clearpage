@@ -28,6 +28,7 @@
     "docx": "^9.5.0",
     "isomorphic-dompurify": "^3.9.0",
     "playwright": "^1.59.1",
+    "@sparticuz/chromium": "^147.0.2",
     "better-sqlite3": "^12.9.0"
   },
   "devDependencies": {

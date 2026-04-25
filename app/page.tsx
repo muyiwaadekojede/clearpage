@@ -71,8 +71,8 @@ export default function Page() {
     };
   }
 
-  async function handleExtract(): Promise<void> {
-    const targetUrl = url.trim();
+  async function handleExtract(urlValue?: string): Promise<void> {
+    const targetUrl = (urlValue ?? url).trim();
 
     if (!targetUrl) {
       void trackClientEvent({
@@ -308,7 +308,12 @@ export default function Page() {
     <>
       {!result ? (
         <div className="relative">
-          <UrlInput url={url} onUrlChange={setUrl} onSubmit={() => void handleExtract()} loading={extracting} />
+          <UrlInput
+            url={url}
+            onUrlChange={setUrl}
+            onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
+            loading={extracting}
+          />
           {extracting && (
             <div className="pointer-events-none absolute inset-x-0 top-[60%] mx-auto w-full max-w-xl px-6">
               <ProgressIndicator activeStep={progressStep} />
