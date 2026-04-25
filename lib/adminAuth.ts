@@ -34,6 +34,14 @@ function randomToken(length: number): string {
 }
 
 function buildGeneratedCredentials(): AdminCredentials {
+  if (process.env.VERCEL) {
+    return {
+      username: process.env.CLEARPAGE_FALLBACK_ADMIN_USER || 'admin',
+      password: process.env.CLEARPAGE_FALLBACK_ADMIN_PASS || 'clearpage-admin',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
   return {
     username: `admin_${randomToken(10)}`,
     password: randomToken(24),
