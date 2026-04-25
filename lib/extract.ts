@@ -1,5 +1,6 @@
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
+import { Agent as UndiciAgent } from 'undici';
 
 import { getBrowser } from './browser';
 import { sanitizeHtml } from './sanitise';
@@ -49,6 +50,17 @@ const IMAGE_EXTENSION_MIME: Record<string, string> = {
   '.avif': 'image/avif',
 };
 
+const INSECURE_TLS_DISPATCHER = new UndiciAgent({
+  connect: { rejectUnauthorized: false },
+});
+
+const FEED_FALLBACK_BY_HOST: Record<string, string[]> = {
+  'hashicorp.com': ['https://www.hashicorp.com/blog/feed.xml'],
+  'www.hashicorp.com': ['https://www.hashicorp.com/blog/feed.xml'],
+  'supabase.com': ['https://supabase.com/rss.xml'],
+  'www.supabase.com': ['https://supabase.com/rss.xml'],
+};
+
 class ExtractPipelineError extends Error {
   readonly code: ExtractErrorCode;
 
@@ -60,6 +72,61 @@ class ExtractPipelineError extends Error {
 
 function countWords(input: string): number {
   return input.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function isTlsCertificateError(error: unknown): boolean {
+  const maybeError = error as { cause?: { code?: string }; message?: string };
+  const code = maybeError.cause?.code || '';
+  if (
+    code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+    code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+    code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+    code === 'CERT_HAS_EXPIRED'
+  ) {
+    return true;
+  }
+
+  const message = (maybeError.message || '').toLowerCase();
+  return message.includes('certificate') && message.includes('verify');
+}
+
+function normalizeUrlForMatch(value: string): string {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = '';
+    parsed.search = '';
+    let pathname = parsed.pathname || '/';
+    if (pathname.length > 1 && pathname.endsWith('/')) {
+      pathname = pathname.slice(0, -1);
+    }
+
+    return `${parsed.protocol}//${parsed.hostname.toLowerCase()}${pathname}`;
+  } catch {
+    return value.trim().toLowerCase().replace(/\/+$/, '');
+  }
+}
+
+function decodeEscapedText(input: string): string {
+  return input
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\\\n/g, ' ')
+    .replace(/\\\\r/g, ' ')
+    .replace(/\\\\t/g, ' ')
+    .replace(/\\\\\"/g, '"')
+    .replace(/\\\\'/g, "'")
+    .replace(/\\\\\//g, '/')
+    .replace(/\\\\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function hasPaywallSignals(html: string): boolean {
@@ -74,17 +141,26 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const requestInitBase = {
+    signal: controller.signal,
+    headers: {
+      Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      ...(referer ? { Referer: referer } : {}),
+    },
+  };
 
   try {
-    return await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        ...(referer ? { Referer: referer } : {}),
-      },
-    });
+    return await fetch(url, requestInitBase);
+  } catch (error) {
+    if (!isTlsCertificateError(error)) {
+      throw error;
+    }
+
+    const retryInit = requestInitBase as RequestInit & { dispatcher?: UndiciAgent };
+    retryInit.dispatcher = INSECURE_TLS_DISPATCHER;
+    return await fetch(url, retryInit);
   } finally {
     clearTimeout(timeoutId);
   }
@@ -165,32 +241,63 @@ function parseJsonImageCandidates(raw: string | null): string[] {
 }
 
 async function fetchHtmlWithTimeout(url: string, timeoutMs: number): Promise<string> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
+  async function fetchAttempt(timeout: number, insecureTls: boolean): Promise<string> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const requestInit = {
       signal: controller.signal,
       headers: {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       },
-    });
+    } as RequestInit & { dispatcher?: UndiciAgent };
 
-    if (!response.ok) {
-      throw new ExtractPipelineError(
-        'FETCH_FAILED',
-        `Failed to reach URL (HTTP ${response.status}).`,
-      );
+    if (insecureTls) {
+      requestInit.dispatcher = INSECURE_TLS_DISPATCHER;
     }
 
-    return await response.text();
+    try {
+      const response = await fetch(url, requestInit);
+
+      if (!response.ok) {
+        throw new ExtractPipelineError(
+          'FETCH_FAILED',
+          `Failed to reach URL (HTTP ${response.status}).`,
+        );
+      }
+
+      return await response.text();
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  try {
+    return await fetchAttempt(timeoutMs, false);
   } catch (error) {
     const maybeError = error as { name?: string };
 
+    if (isTlsCertificateError(error)) {
+      try {
+        return await fetchAttempt(timeoutMs, true);
+      } catch (tlsRetryError) {
+        if (tlsRetryError instanceof ExtractPipelineError) throw tlsRetryError;
+        throw new ExtractPipelineError('FETCH_FAILED', 'Could not fetch the target URL.');
+      }
+    }
+
     if (maybeError?.name === 'AbortError') {
-      throw new ExtractPipelineError('TIMEOUT', 'The page took too long to load.');
+      try {
+        return await fetchAttempt(timeoutMs + 15_000, false);
+      } catch (retryError) {
+        const retryMaybe = retryError as { name?: string };
+        if (retryMaybe?.name === 'AbortError') {
+          throw new ExtractPipelineError('TIMEOUT', 'The page took too long to load.');
+        }
+        if (retryError instanceof ExtractPipelineError) throw retryError;
+        throw new ExtractPipelineError('FETCH_FAILED', 'Could not fetch the target URL.');
+      }
     }
 
     if (error instanceof ExtractPipelineError) {
@@ -198,8 +305,6 @@ async function fetchHtmlWithTimeout(url: string, timeoutMs: number): Promise<str
     }
 
     throw new ExtractPipelineError('FETCH_FAILED', 'Could not fetch the target URL.');
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -590,6 +695,196 @@ function hasBotChallengeSignals(html: string): boolean {
   return weakCount >= 2 && !hasReadableScaffold;
 }
 
+function resolveFeedFallbackUrls(inputUrl: URL): string[] {
+  return FEED_FALLBACK_BY_HOST[inputUrl.hostname.toLowerCase()] || [];
+}
+
+function getHostSiteName(inputUrl: URL): string {
+  return inputUrl.hostname.replace(/^www\./i, '');
+}
+
+async function buildResponseFromFallbackContent(input: {
+  sourceUrl: URL;
+  images: ImageMode;
+  title: string;
+  byline?: string;
+  siteName?: string;
+  publishedTime?: string;
+  excerpt?: string;
+  lang?: string;
+  contentHtml: string;
+}): Promise<ExtractResponse | null> {
+  const cleanHtml = sanitizeHtml(input.contentHtml || '');
+  if (!cleanHtml.trim()) return null;
+
+  const textDom = new JSDOM(`<body>${cleanHtml}</body>`, { url: input.sourceUrl.toString() });
+  let textContent = '';
+
+  try {
+    textContent = normalizeExtractText(textDom.window.document.body.textContent || '');
+  } finally {
+    textDom.window.close();
+  }
+
+  if (textContent.length < 100) {
+    return null;
+  }
+
+  const variants = await buildImageVariants(cleanHtml, input.sourceUrl.toString());
+  const finalizedVariants = {
+    on: sanitizeHtml(variants.on.content),
+    off: sanitizeHtml(variants.off.content),
+    captions: sanitizeHtml(variants.captions.content),
+  };
+
+  return {
+    success: true,
+    title: normalizeExtractText(input.title) || 'Untitled Article',
+    byline: normalizeExtractText(input.byline) || 'Unknown',
+    siteName: normalizeExtractText(input.siteName) || getHostSiteName(input.sourceUrl),
+    publishedTime: normalizeExtractText(input.publishedTime) || 'Unknown',
+    excerpt: normalizeExtractText(input.excerpt) || '',
+    lang: normalizeExtractText(input.lang) || 'Unknown',
+    content: finalizedVariants[input.images],
+    contentVariants: finalizedVariants,
+    textContent,
+    wordCount: countWords(textContent),
+    imageCount: variants.on.totalImages,
+    sourceUrl: input.sourceUrl.toString(),
+  };
+}
+
+async function trySyndicationFallback(url: URL, images: ImageMode): Promise<ExtractResponse | null> {
+  const feedUrls = resolveFeedFallbackUrls(url);
+  if (feedUrls.length === 0) return null;
+
+  const targetNormalized = normalizeUrlForMatch(url.toString());
+
+  for (const feedUrl of feedUrls) {
+    let feedXml = '';
+    try {
+      feedXml = await fetchHtmlWithTimeout(feedUrl, 20_000);
+    } catch {
+      continue;
+    }
+
+    const xmlDom = new JSDOM(feedXml, { contentType: 'text/xml', url: feedUrl });
+    try {
+      const entries = Array.from(xmlDom.window.document.querySelectorAll('entry, item'));
+      for (const entry of entries) {
+        const atomLink = entry.querySelector('link[href]')?.getAttribute('href')?.trim() || '';
+        const rssLink = entry.querySelector('link')?.textContent?.trim() || '';
+        const guidLink = entry.querySelector('guid')?.textContent?.trim() || '';
+        const idLink = entry.querySelector('id')?.textContent?.trim() || '';
+        const candidateLinks = [atomLink, rssLink, guidLink, idLink].filter(Boolean);
+
+        const matchedLink = candidateLinks.find((candidate) => {
+          const normalizedCandidate = normalizeUrlForMatch(candidate);
+          if (normalizedCandidate === targetNormalized) return true;
+
+          try {
+            const candidateUrl = new URL(candidate);
+            return candidateUrl.pathname === url.pathname;
+          } catch {
+            return false;
+          }
+        });
+
+        if (!matchedLink) continue;
+
+        const contentEncoded =
+          entry.querySelector('content')?.textContent ||
+          entry.getElementsByTagName('content:encoded')[0]?.textContent ||
+          entry.querySelector('description')?.textContent ||
+          entry.querySelector('summary')?.textContent ||
+          '';
+
+        const fallbackResponse = await buildResponseFromFallbackContent({
+          sourceUrl: url,
+          images,
+          title: entry.querySelector('title')?.textContent || 'Untitled Article',
+          byline:
+            entry.querySelector('author > name')?.textContent ||
+            entry.querySelector('dc\\:creator')?.textContent ||
+            '',
+          siteName: getHostSiteName(url),
+          publishedTime:
+            entry.querySelector('updated')?.textContent ||
+            entry.querySelector('published')?.textContent ||
+            entry.querySelector('pubDate')?.textContent ||
+            '',
+          excerpt:
+            entry.querySelector('summary')?.textContent ||
+            entry.querySelector('description')?.textContent ||
+            '',
+          lang: xmlDom.window.document.documentElement.getAttribute('xml:lang') || 'Unknown',
+          contentHtml: contentEncoded,
+        });
+
+        if (fallbackResponse?.success) {
+          return fallbackResponse;
+        }
+      }
+    } finally {
+      xmlDom.window.close();
+    }
+  }
+
+  return null;
+}
+
+async function tryRscPayloadFallback(
+  html: string,
+  url: URL,
+  images: ImageMode,
+): Promise<ExtractResponse | null> {
+  if (!html.includes('self.__next_f.push')) return null;
+
+  const rawSegments = Array.from(
+    html.matchAll(/children:\s*\\\"([^\\\"]{20,})\\\"/g),
+    (match) => decodeEscapedText(match[1]),
+  ).filter(Boolean);
+
+  if (rawSegments.length < 5) return null;
+
+  const uniqueSegments: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of rawSegments) {
+    const key = segment.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueSegments.push(segment);
+  }
+
+  const combinedText = normalizeExtractText(uniqueSegments.join(' '));
+  if (countWords(combinedText) < 180) return null;
+
+  const contentHtml = uniqueSegments.map((segment) => `<p>${escapeHtml(segment)}</p>`).join('\n');
+  const dom = new JSDOM(html, { url: url.toString() });
+
+  try {
+    const title =
+      getMetaContent(dom.window.document, ['meta[property="og:title"]']) ||
+      dom.window.document.title ||
+      'Untitled Article';
+    const siteName =
+      getMetaContent(dom.window.document, ['meta[property="og:site_name"]']) ||
+      getHostSiteName(url);
+    const excerpt = getMetaContent(dom.window.document, ['meta[property="og:description"]']);
+
+    return await buildResponseFromFallbackContent({
+      sourceUrl: url,
+      images,
+      title,
+      siteName,
+      excerpt,
+      contentHtml,
+    });
+  } finally {
+    dom.window.close();
+  }
+}
+
 function deriveMediumCustomDomainUrls(inputUrl: URL): string[] {
   if (!inputUrl.hostname.endsWith('.medium.com')) return [];
 
@@ -690,6 +985,11 @@ export async function extractFromUrl(
   try {
     let html = await fetchRenderedHtml(parsedUrl.toString());
     if (hasBotChallengeSignals(html)) {
+      const syndicationFallback = await trySyndicationFallback(parsedUrl, images);
+      if (syndicationFallback) {
+        return syndicationFallback;
+      }
+
       return {
         success: false,
         errorCode: 'FETCH_FAILED',
@@ -704,6 +1004,16 @@ export async function extractFromUrl(
         const article = new Readability(dom.window.document).parse();
 
         if (!article) {
+          const rscFallback = await tryRscPayloadFallback(html, parsedUrl, images);
+          if (rscFallback) {
+            return rscFallback;
+          }
+
+          const syndicationFallback = await trySyndicationFallback(parsedUrl, images);
+          if (syndicationFallback) {
+            return syndicationFallback;
+          }
+
           return {
             success: false,
             errorCode: 'EXTRACTION_FAILED',
@@ -739,6 +1049,16 @@ export async function extractFromUrl(
         }
 
         if (textContent.length < 100) {
+          const rscFallback = await tryRscPayloadFallback(html, parsedUrl, images);
+          if (rscFallback) {
+            return rscFallback;
+          }
+
+          const syndicationFallback = await trySyndicationFallback(parsedUrl, images);
+          if (syndicationFallback) {
+            return syndicationFallback;
+          }
+
           return {
             success: false,
             errorCode: 'EMPTY_CONTENT',
@@ -788,6 +1108,13 @@ export async function extractFromUrl(
     };
   } catch (error) {
     const maybeError = error as ExtractPipelineError;
+    const fallbackCodes: ExtractErrorCode[] = ['FETCH_FAILED', 'TIMEOUT', 'EXTRACTION_FAILED'];
+    if (maybeError?.code && fallbackCodes.includes(maybeError.code)) {
+      const syndicationFallback = await trySyndicationFallback(parsedUrl, images);
+      if (syndicationFallback) {
+        return syndicationFallback;
+      }
+    }
 
     if (maybeError.code) {
       return {
