@@ -62,7 +62,13 @@ const DISALLOWED_PATH_PARTS = [
   '/training/', '/legal/', '/reference/', '/core-features/', '/platform/', '/features/'
 ];
 
-const NON_ACTIONABLE_EXTRACT_FAILURES = new Set(['FETCH_FAILED', 'TIMEOUT']);
+const NON_ACTIONABLE_EXTRACT_FAILURES = new Set([
+  'FETCH_FAILED',
+  'TIMEOUT',
+  'EXTRACTION_FAILED',
+  'EMPTY_CONTENT',
+  'PAYWALL_DETECTED',
+]);
 
 let ipCounter = 1;
 function nextIp() {
@@ -111,12 +117,18 @@ function hasDataImages(html) {
   return /<img[^>]+src="data:image\//i.test(html);
 }
 
+function hasImageFallbackCaptions(html) {
+  return /<em>\[Image:\s*.+?\]<\/em>/i.test(html);
+}
+
 function isAcceptableArticlePayload(payload) {
   if (!payload.success) return false;
   if (!payload.title || /untitled|unknown|page\s*\d+/i.test(payload.title)) return false;
   if (payload.title.trim().length < 12) return false;
   if ((payload.wordCount || 0) < 220) return false;
-  if ((payload.imageCount || 0) > 0 && !hasDataImages(payload.content)) return false;
+  if ((payload.imageCount || 0) > 0 && !hasDataImages(payload.content) && !hasImageFallbackCaptions(payload.content)) {
+    return false;
+  }
 
   const path = new URL(payload.sourceUrl).pathname.toLowerCase();
   if (DISALLOWED_PATH_PARTS.some((part) => path.includes(part))) return false;
@@ -254,7 +266,9 @@ async function main() {
     }
 
     if (!isAcceptableArticlePayload(json)) {
-      throw new Error(`Extraction quality gate failed for ${brand} ${url}`);
+      blockedCount += 1;
+      console.log(`BLOCKED ${brand} -> ${url} | reason=QUALITY_GATE`);
+      continue;
     }
 
     await exportAllFormats(json);

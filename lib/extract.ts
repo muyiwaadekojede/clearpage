@@ -25,12 +25,17 @@ const RENDER_ERROR_MARKERS = [
   'error loading story',
 ];
 
-const BOT_CHALLENGE_MARKERS = [
+const BOT_CHALLENGE_WEAK_MARKERS = [
   '__cf_chl_tk',
   'challenge-platform',
   'cf-browser-verification',
+];
+
+const BOT_CHALLENGE_STRONG_MARKERS = [
   'just a moment...',
   'checking your browser before accessing',
+  'enable javascript and cookies to continue',
+  'vercel security checkpoint',
 ];
 
 const IMAGE_EXTENSION_MIME: Record<string, string> = {
@@ -442,7 +447,7 @@ async function fetchRenderedHtml(url: string): Promise<string> {
     }
 
     if (maybeError.name === 'TimeoutError') {
-      throw new ExtractPipelineError('TIMEOUT', 'The page took too long to load.');
+      return await fetchHtmlWithTimeout(url, 30_000);
     }
 
     // Fallback for serverless environments where browser launch/context may fail.
@@ -553,7 +558,12 @@ function hasRenderErrorSignals(textContent: string, html: string): boolean {
 
 function hasBotChallengeSignals(html: string): boolean {
   const haystack = html.toLowerCase();
-  return BOT_CHALLENGE_MARKERS.some((marker) => haystack.includes(marker));
+  const strong = BOT_CHALLENGE_STRONG_MARKERS.some((marker) => haystack.includes(marker));
+  const weakCount = BOT_CHALLENGE_WEAK_MARKERS.filter((marker) => haystack.includes(marker)).length;
+  const hasReadableScaffold = /<article|<main|<h1/i.test(haystack) && haystack.length > 8_000;
+
+  if (strong) return true;
+  return weakCount >= 2 && !hasReadableScaffold;
 }
 
 function deriveMediumCustomDomainUrls(inputUrl: URL): string[] {
@@ -569,6 +579,23 @@ function deriveMediumCustomDomainUrls(inputUrl: URL): string[] {
   if (!inputUrl.pathname.endsWith('/')) {
     const withSlashPath = `${inputUrl.pathname}/${inputUrl.search || ''}${inputUrl.hash || ''}`;
     candidates.unshift(new URL(withSlashPath, base).toString());
+  }
+
+  return Array.from(new Set(candidates));
+}
+
+function deriveMediumPublicationFallbackUrls(inputUrl: URL): string[] {
+  const host = inputUrl.hostname.toLowerCase();
+  const likelyPublications = ['netflixtechblog.com'];
+
+  if (!likelyPublications.includes(host)) return [];
+
+  const mediumHost = host.replace(/\.com$/i, '.medium.com');
+  const path = `${inputUrl.pathname}${inputUrl.search || ''}${inputUrl.hash || ''}`;
+  const candidates = [new URL(path, `https://${mediumHost}`).toString()];
+
+  if (!inputUrl.pathname.endsWith('/')) {
+    candidates.unshift(new URL(`${inputUrl.pathname}/${inputUrl.search || ''}${inputUrl.hash || ''}`, `https://${mediumHost}`).toString());
   }
 
   return Array.from(new Set(candidates));
@@ -602,6 +629,19 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
       if (customDomainResult.success) {
         return {
           ...customDomainResult,
+          sourceUrl: parsedUrl.toString(),
+        };
+      }
+    }
+  }
+
+  const mediumPublicationFallbackUrls = deriveMediumPublicationFallbackUrls(parsedUrl);
+  if (mediumPublicationFallbackUrls.length > 0) {
+    for (const candidate of mediumPublicationFallbackUrls) {
+      const mediumResult = await extractFromUrl(candidate, images);
+      if (mediumResult.success) {
+        return {
+          ...mediumResult,
           sourceUrl: parsedUrl.toString(),
         };
       }
