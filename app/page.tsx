@@ -321,7 +321,9 @@ export default function Page() {
           )}
         </div>
       ) : (
-        <div className={`cp-shell cp-enter theme-${settings.colorTheme} flex min-h-screen flex-col md:flex-row`}>
+        <div
+          className={`cp-shell cp-enter theme-${settings.colorTheme} flex min-h-screen flex-col md:h-screen md:flex-row`}
+        >
           <SettingsSidebar
             title={result.title}
             byline={result.byline}
@@ -338,7 +340,7 @@ export default function Page() {
             onNewUrl={resetState}
           />
 
-          <main className="flex-1 overflow-hidden pb-20 md:pb-0">
+          <main className="flex-1 overflow-hidden pb-20 md:h-screen md:pb-0">
             <ReadingPreview content={transformedContent} settings={settings} />
           </main>
         </div>

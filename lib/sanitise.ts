@@ -57,9 +57,11 @@ export function sanitizeFilename(title: string, fallback = 'clearpage-export'): 
     .replace(/[^\w\s\-().,&']/g, '')
     .replace(MULTI_SPACE, '-')
     .replace(MULTI_HYPHEN, '-')
-    .replace(/^-|-$/g, '');
+    .replace(/^-|-$/g, '')
+    .replace(/[.\s]+$/g, '');
 
-  const candidate = base.slice(0, 80).trim();
+  // Keep full readable titles by default while staying under practical OS filename limits.
+  const candidate = base.slice(0, 220).trim();
   return candidate.length > 0 ? candidate : fallback;
 }
 

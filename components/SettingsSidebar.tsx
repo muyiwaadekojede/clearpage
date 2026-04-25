@@ -42,8 +42,10 @@ export function SettingsSidebar({
   }
 
   return (
-    <aside className={`theme-${settings.colorTheme} h-full bg-[var(--preview-bg)]`}>
-      <div className="hidden h-full w-[280px] overflow-y-auto border-r border-[var(--preview-border)] p-4 md:block">
+    <aside
+      className={`theme-${settings.colorTheme} bg-[var(--preview-bg)] md:sticky md:top-0 md:h-screen md:w-[320px] md:flex-shrink-0`}
+    >
+      <div className="hidden h-screen overflow-y-auto border-r border-[var(--preview-border)] p-4 md:block">
         <SidebarBody
           title={title}
           byline={byline}
@@ -127,7 +129,7 @@ function SidebarBody({
         <dl className="space-y-1 text-sm text-[var(--preview-muted)]">
           <div>
             <dt className="font-semibold text-[var(--preview-text)]">Title</dt>
-            <dd className="truncate">{title}</dd>
+            <dd className="break-words">{title}</dd>
           </div>
           <div>
             <dt className="font-semibold text-[var(--preview-text)]">Author</dt>

@@ -489,21 +489,61 @@ function stripTitleSuffixes(title: string, siteName: string): string {
 
 function deriveBestTitle(
   articleTitle: string,
+  articleContentHtml: string,
   document: Document,
   siteName: string,
 ): string {
-  const candidates = [
-    articleTitle,
-    getMetaContent(document, ['meta[property="og:title"]', 'meta[name="twitter:title"]']),
-    document.querySelector('h1')?.textContent || '',
-    document.title || '',
-  ]
-    .map((candidate) => normalizeCandidateTitle(candidate))
-    .map((candidate) => stripTitleSuffixes(candidate, siteName))
-    .filter(Boolean);
+  let contentHeading = '';
+  try {
+    const contentDom = new JSDOM(articleContentHtml || '');
+    const headingCandidates = Array.from(
+      contentDom.window.document.querySelectorAll('h1, h2'),
+    )
+      .map((node) => normalizeCandidateTitle(node.textContent || ''))
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
 
-  const preferred = candidates.find((candidate) => candidate.split(/\s+/).length >= 3);
-  return preferred || candidates[0] || 'Untitled Article';
+    contentHeading = headingCandidates[0] || '';
+    contentDom.window.close();
+  } catch {
+    contentHeading = '';
+  }
+
+  const labeledCandidates = [
+    { source: 'content-heading', value: contentHeading, boost: 30 },
+    { source: 'article', value: articleTitle, boost: 10 },
+    {
+      source: 'og',
+      value: getMetaContent(document, ['meta[property="og:title"]', 'meta[name="twitter:title"]']),
+      boost: 20,
+    },
+    { source: 'h1', value: document.querySelector('h1')?.textContent || '', boost: 16 },
+    { source: 'document', value: document.title || '', boost: 8 },
+  ]
+    .map((candidate) => ({
+      ...candidate,
+      value: stripTitleSuffixes(normalizeCandidateTitle(candidate.value), siteName),
+    }))
+    .filter((candidate) => candidate.value.length > 0);
+
+  if (labeledCandidates.length === 0) return 'Untitled Article';
+
+  const scored = labeledCandidates.map((candidate) => {
+    const words = candidate.value.split(/\s+/).filter(Boolean).length;
+    const chars = candidate.value.length;
+    const genericPrefixPenalty =
+      /^on\s+/i.test(candidate.value) && words <= 8
+        ? -8
+        : 0;
+
+    return {
+      ...candidate,
+      score: candidate.boost + words * 4 + chars * 0.2 + genericPrefixPenalty,
+    };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.value || 'Untitled Article';
 }
 
 function hasRenderErrorSignals(textContent: string, html: string): boolean {
@@ -640,6 +680,7 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
           success: true,
           title: deriveBestTitle(
             normalizeExtractText(article.title),
+            article.content || '',
             dom.window.document,
             normalizeExtractText(article.siteName),
           ),
