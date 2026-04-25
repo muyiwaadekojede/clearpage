@@ -214,7 +214,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(500).json({
       success: false,
       error: 'Failed to generate export.',
-      details: process.env.NODE_ENV === 'development' ? details : undefined,
+      errorMessage: details,
     });
   }
 }
