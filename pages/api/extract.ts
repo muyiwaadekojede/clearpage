@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { trackAnalyticsEvent } from '@/lib/analytics';
+import { storeExtractSnapshot } from '@/lib/extractCache';
 import { extractFromUrl } from '@/lib/extract';
 import { extractRateLimiter } from '@/lib/rateLimit';
 import type { ExtractResponse, ImageMode } from '@/lib/types';
@@ -118,5 +119,18 @@ export default async function handler(
     },
   });
 
-  return res.status(200).json(result);
+  const extractionId = storeExtractSnapshot({
+    title: result.title,
+    byline: result.byline,
+    siteName: result.siteName,
+    publishedTime: result.publishedTime,
+    sourceUrl: result.sourceUrl,
+    textContent: result.textContent,
+    contentVariants: result.contentVariants,
+  });
+
+  return res.status(200).json({
+    ...result,
+    extractionId,
+  });
 }

@@ -1,6 +1,6 @@
 import { loginAsAdmin } from './e2e-admin-auth.mjs';
 
-const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:3000';
+const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
 
 const payload = {
   failedUrl: 'https://example.com/unreachable',

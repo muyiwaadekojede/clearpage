@@ -478,6 +478,25 @@ function normalizeCandidateTitle(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function tokenizeTitle(value: string): string[] {
+  return normalizeCandidateTitle(value)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 2);
+}
+
+function titlesAreRelated(a: string, b: string): boolean {
+  const tokensA = tokenizeTitle(a);
+  const tokensB = tokenizeTitle(b);
+  if (tokensA.length === 0 || tokensB.length === 0) return false;
+
+  const setB = new Set(tokensB);
+  const overlap = tokensA.filter((token) => setB.has(token)).length;
+  const ratio = overlap / Math.max(tokensA.length, tokensB.length);
+  return ratio >= 0.35;
+}
+
 function stripTitleSuffixes(title: string, siteName: string): string {
   let output = title;
 
@@ -532,6 +551,7 @@ function deriveBestTitle(
     .filter((candidate) => candidate.value.length > 0);
 
   if (labeledCandidates.length === 0) return 'Untitled Article';
+  const h1Title = normalizeCandidateTitle(document.querySelector('h1')?.textContent || '');
 
   const scored = labeledCandidates.map((candidate) => {
     const words = candidate.value.split(/\s+/).filter(Boolean).length;
@@ -540,10 +560,14 @@ function deriveBestTitle(
       /^on\s+/i.test(candidate.value) && words <= 8
         ? -8
         : 0;
+    const contentHeadingPenalty =
+      candidate.source === 'content-heading' && h1Title && !titlesAreRelated(candidate.value, h1Title)
+        ? -22
+        : 0;
 
     return {
       ...candidate,
-      score: candidate.boost + words * 4 + chars * 0.2 + genericPrefixPenalty,
+      score: candidate.boost + words * 4 + chars * 0.2 + genericPrefixPenalty + contentHeadingPenalty,
     };
   });
 

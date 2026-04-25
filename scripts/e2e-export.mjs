@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 
-const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:3000';
+const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
 
 const raw = await fs.readFile('.tmp-extract.json', 'utf8');
 const article = JSON.parse(raw);

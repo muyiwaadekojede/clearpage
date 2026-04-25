@@ -194,6 +194,7 @@ export default function Page() {
         body: JSON.stringify({
           format,
           images,
+          extractionId: result.extractionId,
           sourceUrl: result.sourceUrl,
           settings,
         }),

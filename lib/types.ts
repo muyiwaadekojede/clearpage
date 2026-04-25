@@ -17,6 +17,7 @@ export interface ReaderSettings {
 
 export interface ExtractSuccessResponse {
   success: true;
+  extractionId?: string;
   title: string;
   byline: string;
   siteName: string;

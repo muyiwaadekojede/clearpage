@@ -8,7 +8,7 @@ setGlobalDispatcher(
   }),
 );
 
-const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:3000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 const PROVIDED_URLS = [
   'https://netflixtechblog.com/learning-a-personalized-homepage-aa8ec670359a',
@@ -196,6 +196,7 @@ async function exportAllFormats(article) {
         }
       : {
           format,
+          extractionId: article.extractionId,
           sourceUrl: article.sourceUrl,
           images: 'on',
           settings,

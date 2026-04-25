@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 
-const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:3000';
+const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
@@ -10,7 +10,10 @@ try {
   await page.getByPlaceholder('https://example.com/article').fill('https://httpbin.org/html');
   await page.getByRole('button', { name: 'Read & Export' }).click();
 
-  await page.getByRole('button', { name: 'Download PDF' }).first().waitFor({ timeout: 60_000 });
+  const pdfButton = page.getByRole('button', { name: 'Download PDF' }).first();
+  await pdfButton.waitFor({ state: 'attached', timeout: 60_000 });
+  await pdfButton.scrollIntoViewIfNeeded();
+  await pdfButton.waitFor({ state: 'visible', timeout: 10_000 });
   await page.getByRole('button', { name: 'New URL' }).first().click();
 
   await page.getByPlaceholder('https://example.com/article').waitFor({ timeout: 10_000 });

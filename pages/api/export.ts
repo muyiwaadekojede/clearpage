@@ -5,6 +5,7 @@ import { exportDocxBuffer } from '@/lib/exportDocx';
 import { buildMarkdownExport } from '@/lib/exportMarkdown';
 import { exportPdfBuffer } from '@/lib/exportPdf';
 import { buildTxtExport } from '@/lib/exportTxt';
+import { getExtractSnapshot } from '@/lib/extractCache';
 import { extractFromUrl } from '@/lib/extract';
 import { sanitizeFilename } from '@/lib/sanitise';
 import { clampNumber } from '@/lib/sanitise';
@@ -58,6 +59,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     publishedTime?: string;
     sourceUrl?: string;
     images?: ImageMode;
+    extractionId?: string;
     settings?: Partial<ReaderSettings>;
   };
 
@@ -72,6 +74,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     body.images === 'off' || body.images === 'captions' || body.images === 'on'
       ? body.images
       : 'on';
+  const extractionId =
+    typeof body.extractionId === 'string' && body.extractionId.trim().length > 0
+      ? body.extractionId.trim()
+      : null;
 
   if (!format || !['pdf', 'txt', 'md', 'docx'].includes(format)) {
     trackAnalyticsEvent(req, {
@@ -100,6 +106,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   let content = typeof body.content === 'string' ? body.content : '';
 
+  if (!content && extractionId) {
+    const snapshot = getExtractSnapshot(extractionId);
+
+    if (snapshot) {
+      content = snapshot.contentVariants[images];
+      textContent = snapshot.textContent;
+      title = snapshot.title || title;
+      byline = snapshot.byline || byline;
+      siteName = snapshot.siteName || siteName;
+      publishedTime = snapshot.publishedTime || publishedTime;
+    }
+  }
+
   if (!content) {
     if (!sourceUrl) {
       trackAnalyticsEvent(req, {
@@ -110,9 +129,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sourceUrl,
         exportFormat: format,
         errorCode: 'MISSING_CONTENT',
-        errorMessage: 'Missing content and source URL.',
+        errorMessage: 'Missing content, extraction ID, and source URL.',
       });
-      return res.status(400).json({ success: false, error: 'Missing content and source URL.' });
+      return res.status(400).json({
+        success: false,
+        error: 'Missing content, extraction ID, and source URL.',
+      });
     }
 
     const extracted = await extractFromUrl(sourceUrl, images);
