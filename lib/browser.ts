@@ -1,3 +1,4 @@
+import sparticuzChromium from '@sparticuz/chromium';
 import type { Browser, LaunchOptions } from 'playwright';
 
 declare global {
@@ -18,7 +19,6 @@ type SparticuzChromiumLike = {
 };
 
 let playwrightModule: PlaywrightLike | null | undefined;
-let sparticuzModule: SparticuzChromiumLike | null | undefined;
 let lastBrowserError: string | null = null;
 let launchMode: 'default' | 'sparticuz' | null = null;
 
@@ -39,25 +39,7 @@ function loadPlaywright(): PlaywrightLike | null {
   return playwrightModule;
 }
 
-function loadSparticuz(): SparticuzChromiumLike | null {
-  if (sparticuzModule !== undefined) {
-    return sparticuzModule;
-  }
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const loaded = require('@sparticuz/chromium') as unknown;
-    if (loaded && typeof loaded === 'object' && 'default' in loaded) {
-      sparticuzModule = (loaded as { default?: SparticuzChromiumLike }).default ?? null;
-    } else {
-      sparticuzModule = loaded as SparticuzChromiumLike;
-    }
-  } catch {
-    sparticuzModule = null;
-  }
-
-  return sparticuzModule ?? null;
-}
+const sparticuzModule = sparticuzChromium as unknown as SparticuzChromiumLike;
 
 function looksLikeMissingBrowserBinary(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -69,20 +51,19 @@ function looksLikeMissingBrowserBinary(error: unknown): boolean {
 }
 
 async function launchWithSparticuz(playwright: PlaywrightLike): Promise<Browser | null> {
-  const sparticuz = loadSparticuz();
-  if (!sparticuz) {
+  if (!sparticuzModule || typeof sparticuzModule.executablePath !== 'function') {
     return null;
   }
 
-  const executablePath = await sparticuz.executablePath();
+  const executablePath = await sparticuzModule.executablePath();
   if (!executablePath) {
     return null;
   }
 
   return playwright.chromium.launch({
-    headless: typeof sparticuz.headless === 'boolean' ? sparticuz.headless : true,
+    headless: sparticuzModule.headless === false ? false : true,
     executablePath,
-    args: sparticuz.args ?? [],
+    args: sparticuzModule.args ?? [],
   });
 }
 
@@ -131,7 +112,7 @@ export function getBrowserRuntimeState(): {
 } {
   return {
     playwrightModuleLoaded: Boolean(playwrightModule),
-    sparticuzModuleLoaded: Boolean(sparticuzModule),
+    sparticuzModuleLoaded: Boolean(sparticuzModule && typeof sparticuzModule.executablePath === 'function'),
     lastBrowserError,
     launchMode,
   };
