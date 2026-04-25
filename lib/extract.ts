@@ -625,8 +625,13 @@ function deriveMediumPublicationFallbackUrls(inputUrl: URL): string[] {
   return Array.from(new Set(candidates));
 }
 
-export async function extractFromUrl(url: string, images: ImageMode): Promise<ExtractResponse> {
+export async function extractFromUrl(
+  url: string,
+  images: ImageMode,
+  visitedUrls?: Set<string>,
+): Promise<ExtractResponse> {
   let parsedUrl: URL;
+  const visited = visitedUrls ?? new Set<string>();
 
   try {
     parsedUrl = new URL(url);
@@ -646,10 +651,20 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
     };
   }
 
+  const normalizedUrl = parsedUrl.toString();
+  if (visited.has(normalizedUrl)) {
+    return {
+      success: false,
+      errorCode: 'FETCH_FAILED',
+      errorMessage: 'This URL could not be reached. It may be offline, private, or blocking automated requests.',
+    };
+  }
+  visited.add(normalizedUrl);
+
   const mediumCustomDomainUrls = deriveMediumCustomDomainUrls(parsedUrl);
   if (mediumCustomDomainUrls.length > 0) {
     for (const candidate of mediumCustomDomainUrls) {
-      const customDomainResult = await extractFromUrl(candidate, images);
+      const customDomainResult = await extractFromUrl(candidate, images, visited);
       if (customDomainResult.success) {
         return {
           ...customDomainResult,
@@ -662,7 +677,7 @@ export async function extractFromUrl(url: string, images: ImageMode): Promise<Ex
   const mediumPublicationFallbackUrls = deriveMediumPublicationFallbackUrls(parsedUrl);
   if (mediumPublicationFallbackUrls.length > 0) {
     for (const candidate of mediumPublicationFallbackUrls) {
-      const mediumResult = await extractFromUrl(candidate, images);
+      const mediumResult = await extractFromUrl(candidate, images, visited);
       if (mediumResult.success) {
         return {
           ...mediumResult,
