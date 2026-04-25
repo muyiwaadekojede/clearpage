@@ -8,11 +8,21 @@ function extractCookie(setCookieHeader) {
   return cookiePart || null;
 }
 
-async function readCredentials(pathname) {
+async function readCredentials(pathname, baseUrl) {
   if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
     return {
       username: String(process.env.ADMIN_USERNAME),
       password: String(process.env.ADMIN_PASSWORD),
+    };
+  }
+
+  const target = String(baseUrl || '').toLowerCase();
+  const isLocalTarget = target.includes('127.0.0.1') || target.includes('localhost');
+
+  if (!isLocalTarget) {
+    return {
+      username: 'admin',
+      password: 'clearpage-admin',
     };
   }
 
@@ -42,7 +52,7 @@ export async function loginAsAdmin(baseUrl) {
   // Touch the auth endpoint first so server-side credential bootstrap runs if needed.
   await fetch(`${baseUrl}/api/admin-auth`);
 
-  const credentials = await readCredentials(credentialsPath);
+  const credentials = await readCredentials(credentialsPath, baseUrl);
   const response = await fetch(`${baseUrl}/api/admin-auth`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
