@@ -283,14 +283,31 @@ async function streamResponseBodyToClient(input: {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') {
+  if (req.method !== 'POST' && req.method !== 'GET') {
     return res.status(405).json({ success: false, error: 'Method not allowed.' });
   }
 
-  const body = req.body as { url?: string; format?: ExportFormat };
-  const sourceUrl = (body?.url || '').trim();
+  const body = req.body as { url?: string; format?: ExportFormat; sessionId?: string } | undefined;
+  const firstQueryValue = (value: string | string[] | undefined): string =>
+    typeof value === 'string' ? value : Array.isArray(value) ? value[0] || '' : '';
+
+  const sourceUrl =
+    req.method === 'GET'
+      ? firstQueryValue(req.query.url).trim()
+      : (body?.url || '').trim();
   const format =
-    body?.format && DIRECT_FILE_FORMATS.includes(body.format) ? body.format : DEFAULT_DIRECT_FILE_FORMAT;
+    (() => {
+      const rawFormat =
+        req.method === 'GET'
+          ? (firstQueryValue(req.query.format) as ExportFormat)
+          : body?.format;
+      return rawFormat && DIRECT_FILE_FORMATS.includes(rawFormat)
+        ? rawFormat
+        : DEFAULT_DIRECT_FILE_FORMAT;
+    })();
+
+  const requestSessionId =
+    req.method === 'GET' ? firstQueryValue(req.query.sessionId).trim() : body?.sessionId?.trim();
 
   if (!sourceUrl) {
     return res.status(400).json({ success: false, error: 'Missing required field: url.' });
@@ -308,6 +325,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   trackAnalyticsEvent(req, {
+    sessionId: requestSessionId || undefined,
     eventName: 'api_direct_file_request',
     eventGroup: 'export',
     status: 'attempt',
@@ -360,6 +378,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
 
       trackAnalyticsEvent(req, {
+        sessionId: requestSessionId || undefined,
         eventName: 'api_direct_file_result',
         eventGroup: 'export',
         status: 'success',
@@ -396,6 +415,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}${currentExtension}"`);
       res.setHeader('x-clearpage-fallback-format', 'original');
       trackAnalyticsEvent(req, {
+        sessionId: requestSessionId || undefined,
         eventName: 'api_direct_file_result',
         eventGroup: 'export',
         status: 'success',
@@ -423,6 +443,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.md"`);
       trackAnalyticsEvent(req, {
+        sessionId: requestSessionId || undefined,
         eventName: 'api_direct_file_result',
         eventGroup: 'export',
         status: 'success',
@@ -447,6 +468,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.txt"`);
       trackAnalyticsEvent(req, {
+        sessionId: requestSessionId || undefined,
         eventName: 'api_direct_file_result',
         eventGroup: 'export',
         status: 'success',
@@ -470,6 +492,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
     res.setHeader('Content-Disposition', `attachment; filename="${safeBase}.docx"`);
     trackAnalyticsEvent(req, {
+      sessionId: requestSessionId || undefined,
       eventName: 'api_direct_file_result',
       eventGroup: 'export',
       status: 'success',
@@ -490,6 +513,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         : 'Failed to process direct file URL.';
 
     trackAnalyticsEvent(req, {
+      sessionId: requestSessionId || undefined,
       eventName: 'api_direct_file_result',
       eventGroup: 'export',
       status: 'failure',

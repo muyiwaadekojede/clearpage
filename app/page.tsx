@@ -142,6 +142,26 @@ export default function Page() {
     };
   }
 
+  function submitDirectFileDownloadViaFrame(sourceUrl: string, format: ExportFormat): void {
+    const frameName = 'clearpage-direct-download-frame';
+    let frame = document.querySelector(`iframe[name="${frameName}"]`) as HTMLIFrameElement | null;
+    if (!frame) {
+      frame = document.createElement('iframe');
+      frame.name = frameName;
+      frame.style.display = 'none';
+      document.body.appendChild(frame);
+    }
+    const params = new URLSearchParams({
+      url: sourceUrl,
+      format,
+    });
+    if (sessionIdRef.current) {
+      params.set('sessionId', sessionIdRef.current);
+    }
+    params.set('_', String(Date.now()));
+    frame.src = `/api/direct-file?${params.toString()}`;
+  }
+
   async function readErrorMessage(response: Response): Promise<string> {
     const raw = await response.text();
     if (!raw) return 'Direct file download failed.';
@@ -159,6 +179,25 @@ export default function Page() {
     format: ExportFormat,
     allowFallback = true,
   ): Promise<void> {
+    if (format === 'pdf') {
+      setDirectFileDownloading(true);
+      try {
+        submitDirectFileDownloadViaFrame(sourceUrl, format);
+
+        void trackClientEvent({
+          eventName: 'direct_file_download_triggered',
+          eventGroup: 'export',
+          status: 'attempt',
+          pagePath: '/',
+          sourceUrl,
+          exportFormat: format,
+        });
+      } finally {
+        setTimeout(() => setDirectFileDownloading(false), 1200);
+      }
+      return;
+    }
+
     setDirectFileDownloading(true);
 
     try {
@@ -174,7 +213,7 @@ export default function Page() {
       if (!response.ok) {
         const message = await readErrorMessage(response);
 
-        if (allowFallback && format !== 'pdf') {
+        if (allowFallback) {
           setInputStatusMessage('Selected format unavailable right now. Downloading original file instead...');
           await downloadDirectFile(sourceUrl, 'pdf', false);
           return;
@@ -205,7 +244,7 @@ export default function Page() {
         exportFormat: format,
       });
 
-      if (response.headers.get('x-clearpage-fallback-format') === 'original' && format !== 'pdf') {
+      if (response.headers.get('x-clearpage-fallback-format') === 'original') {
         setInputStatusMessage('Converted file unavailable. Downloaded original file instead.');
       }
     } finally {
@@ -328,8 +367,15 @@ export default function Page() {
     if (!directFileUrl) return;
 
     try {
-      setInputStatusMessage('');
+      if (directFileFormat === 'pdf') {
+        setInputStatusMessage('Starting PDF download...');
+      } else {
+        setInputStatusMessage('');
+      }
       await downloadDirectFile(directFileUrl, directFileFormat);
+      if (directFileFormat === 'pdf') {
+        setInputStatusMessage('PDF download requested. Check your browser downloads tray.');
+      }
     } catch (error) {
       console.error(error);
       setInputStatusMessage(
