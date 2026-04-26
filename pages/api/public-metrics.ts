@@ -8,6 +8,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   const metrics = getPublicUsageMetrics();
+  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=300');
   return res.status(200).json({ success: true, metrics });
 }
 

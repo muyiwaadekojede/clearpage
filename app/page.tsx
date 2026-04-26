@@ -26,6 +26,13 @@ type ExtractFailurePayload = {
   errorMessage?: string;
 };
 
+type PublicMetricsPayload = {
+  success: boolean;
+  metrics?: {
+    totalUsers: number;
+  };
+};
+
 function initialThemeFromSystem(): ReaderSettings['colorTheme'] {
   if (typeof window === 'undefined') return 'light';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -46,6 +53,7 @@ export default function Page() {
   const [result, setResult] = useState<ExtractSuccessResponse | null>(null);
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
+  const [trustedUsers, setTrustedUsers] = useState<number | null>(null);
 
   const sessionIdRef = useRef<string>('');
 
@@ -62,6 +70,35 @@ export default function Page() {
         href: window.location.href,
       },
     });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTrustCount(): Promise<void> {
+      try {
+        const response = await fetch('/api/public-metrics');
+        if (!response.ok) return;
+
+        const json = (await response.json()) as PublicMetricsPayload;
+        if (!active || !json.success || !json.metrics) return;
+
+        const nextTotal = Number(json.metrics.totalUsers || 0);
+        setTrustedUsers(Number.isFinite(nextTotal) ? nextTotal : 0);
+      } catch {
+        // Trust count is supplemental content and should not block UX.
+      }
+    }
+
+    void loadTrustCount();
+    const interval = setInterval(() => {
+      void loadTrustCount();
+    }, 300_000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const transformedContent = useMemo(() => {
@@ -304,6 +341,11 @@ export default function Page() {
             onUrlChange={setUrl}
             onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
             loading={extracting}
+            subtitle={
+              trustedUsers && trustedUsers > 0
+                ? `Trusted by ${trustedUsers.toLocaleString()} readers. Paste any URL. Get a clean, exportable document.`
+                : 'Paste any URL. Get a clean, exportable document.'
+            }
           />
         </div>
       ) : (
