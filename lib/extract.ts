@@ -49,6 +49,9 @@ const IMAGE_EXTENSION_MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.avif': 'image/avif',
 };
+const MAX_EMBEDDED_IMAGES_PER_PAGE = 24;
+const MAX_EMBED_BYTES_PER_IMAGE = 2_000_000;
+const MAX_EMBED_BYTES_PER_PAGE = 10_000_000;
 
 const INSECURE_TLS_DISPATCHER = new UndiciAgent({
   connect: { rejectUnauthorized: false },
@@ -432,6 +435,7 @@ async function processImages(
     }
 
     let embeddedImages = 0;
+    let embeddedBytes = 0;
 
     for (const img of images) {
       const rawSrc = resolveImageSource(img);
@@ -447,16 +451,30 @@ async function processImages(
         continue;
       }
 
+      if (embeddedImages >= MAX_EMBEDDED_IMAGES_PER_PAGE) {
+        img.insertAdjacentHTML('afterend', buildImageCaption(img.getAttribute('alt')));
+        img.remove();
+        continue;
+      }
+
       const resolvedSrc = new URL(rawSrc, sourceUrl).toString();
 
       try {
-        const response = await fetchWithTimeout(resolvedSrc, 10_000, sourceUrl);
+        const response = await fetchWithTimeout(resolvedSrc, 8_000, sourceUrl);
 
         if (!response.ok) {
           throw new Error(`Image fetch failed with status ${response.status}`);
         }
 
         const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length > MAX_EMBED_BYTES_PER_IMAGE) {
+          throw new Error('Image exceeded per-image embed limit.');
+        }
+
+        if (embeddedBytes + bytes.length > MAX_EMBED_BYTES_PER_PAGE) {
+          throw new Error('Image exceeded page embed budget.');
+        }
+
         const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
         const mime = detectImageMime(contentType, resolvedSrc, bytes);
 
@@ -478,6 +496,7 @@ async function processImages(
         img.removeAttribute('data-url');
         img.removeAttribute('data-hi-res-src');
         embeddedImages += 1;
+        embeddedBytes += bytes.length;
       } catch {
         img.insertAdjacentHTML('afterend', buildImageCaption(img.getAttribute('alt')));
         img.remove();
@@ -493,16 +512,25 @@ async function processImages(
 async function buildImageVariants(
   html: string,
   sourceUrl: string,
+  requestedMode: ImageMode,
 ): Promise<{
   on: { content: string; totalImages: number; embeddedImages: number };
   off: { content: string; totalImages: number; embeddedImages: number };
   captions: { content: string; totalImages: number; embeddedImages: number };
 }> {
-  const [on, off, captions] = await Promise.all([
-    processImages(html, 'on', sourceUrl),
+  const [off, captions] = await Promise.all([
     processImages(html, 'off', sourceUrl),
     processImages(html, 'captions', sourceUrl),
   ]);
+
+  const on =
+    requestedMode === 'on'
+      ? await processImages(html, 'on', sourceUrl)
+      : {
+          content: html,
+          totalImages: off.totalImages,
+          embeddedImages: 0,
+        };
 
   return { on, off, captions };
 }
@@ -695,6 +723,33 @@ function hasBotChallengeSignals(html: string): boolean {
   return weakCount >= 2 && !hasReadableScaffold;
 }
 
+function getBodyTextLengthFromHtml(html: string): number {
+  const dom = new JSDOM(html);
+  try {
+    return normalizeExtractText(dom.window.document.body?.textContent || '').length;
+  } finally {
+    dom.window.close();
+  }
+}
+
+function likelyNeedsBrowserRendering(html: string): boolean {
+  const haystack = html.toLowerCase();
+  const scriptCount = (haystack.match(/<script\b/g) || []).length;
+  const hasAppShellHints =
+    haystack.includes('id="__next"') ||
+    haystack.includes('id="root"') ||
+    haystack.includes('data-reactroot') ||
+    haystack.includes('ng-version') ||
+    haystack.includes('self.__next_f.push') ||
+    haystack.includes('__next_data__');
+  const hasReaderScaffold = /<article|<main|<p/i.test(haystack);
+  const textLength = getBodyTextLengthFromHtml(html);
+
+  if (textLength < 800 && hasAppShellHints) return true;
+  if (textLength < 500 && scriptCount >= 12 && !hasReaderScaffold) return true;
+  return false;
+}
+
 function resolveFeedFallbackUrls(inputUrl: URL): string[] {
   return FEED_FALLBACK_BY_HOST[inputUrl.hostname.toLowerCase()] || [];
 }
@@ -730,7 +785,7 @@ async function buildResponseFromFallbackContent(input: {
     return null;
   }
 
-  const variants = await buildImageVariants(cleanHtml, input.sourceUrl.toString());
+  const variants = await buildImageVariants(cleanHtml, input.sourceUrl.toString(), input.images);
   const finalizedVariants = {
     on: sanitizeHtml(variants.on.content),
     off: sanitizeHtml(variants.off.content),
@@ -983,27 +1038,41 @@ export async function extractFromUrl(
   }
 
   try {
-    let html = await fetchRenderedHtml(parsedUrl.toString());
-    if (hasBotChallengeSignals(html)) {
-      const syndicationFallback = await trySyndicationFallback(parsedUrl, images);
-      if (syndicationFallback) {
-        return syndicationFallback;
+    let html = await fetchHtmlWithTimeout(parsedUrl.toString(), 20_000);
+    let usedBrowserFallback = false;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (hasBotChallengeSignals(html)) {
+        if (!usedBrowserFallback) {
+          html = await fetchRenderedHtml(parsedUrl.toString());
+          usedBrowserFallback = true;
+          continue;
+        }
+
+        const syndicationFallback = await trySyndicationFallback(parsedUrl, images);
+        if (syndicationFallback) {
+          return syndicationFallback;
+        }
+
+        return {
+          success: false,
+          errorCode: 'FETCH_FAILED',
+          errorMessage: 'This URL could not be reached. It may be offline, private, or blocking automated requests.',
+        };
       }
 
-      return {
-        success: false,
-        errorCode: 'FETCH_FAILED',
-        errorMessage: 'This URL could not be reached. It may be offline, private, or blocking automated requests.',
-      };
-    }
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
       const dom = new JSDOM(html, { url: parsedUrl.toString() });
 
       try {
         const article = new Readability(dom.window.document).parse();
 
         if (!article) {
+          if (!usedBrowserFallback && likelyNeedsBrowserRendering(html)) {
+            html = await fetchRenderedHtml(parsedUrl.toString());
+            usedBrowserFallback = true;
+            continue;
+          }
+
           const rscFallback = await tryRscPayloadFallback(html, parsedUrl, images);
           if (rscFallback) {
             return rscFallback;
@@ -1026,8 +1095,9 @@ export async function extractFromUrl(
         const wordCount = countWords(textContent);
 
         if (wordCount < 80 && hasRenderErrorSignals(textContent, html)) {
-          if (attempt === 0) {
+          if (!usedBrowserFallback) {
             html = await fetchRenderedHtml(parsedUrl.toString());
+            usedBrowserFallback = true;
             continue;
           }
 
@@ -1049,6 +1119,12 @@ export async function extractFromUrl(
         }
 
         if (textContent.length < 100) {
+          if (!usedBrowserFallback && likelyNeedsBrowserRendering(html)) {
+            html = await fetchRenderedHtml(parsedUrl.toString());
+            usedBrowserFallback = true;
+            continue;
+          }
+
           const rscFallback = await tryRscPayloadFallback(html, parsedUrl, images);
           if (rscFallback) {
             return rscFallback;
@@ -1067,7 +1143,7 @@ export async function extractFromUrl(
         }
 
         const cleanHtml = sanitizeHtml(article.content || '');
-        const variants = await buildImageVariants(cleanHtml, parsedUrl.toString());
+        const variants = await buildImageVariants(cleanHtml, parsedUrl.toString(), images);
         const finalizedVariants = {
           on: sanitizeHtml(variants.on.content),
           off: sanitizeHtml(variants.off.content),

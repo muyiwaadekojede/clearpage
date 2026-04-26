@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import db from '@/lib/db';
 import { storeExtractSnapshot } from '@/lib/extractCache';
 import { extractFromUrl } from '@/lib/extract';
-import type { ExportFormat, ImageMode, ReaderSettings } from '@/lib/types';
+import type { ExportFormat, ExtractErrorCode, ImageMode, ReaderSettings } from '@/lib/types';
 
 export type BatchJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type BatchItemStatus = 'pending' | 'running' | 'success' | 'failure';
@@ -47,6 +47,12 @@ export type BatchItemRow = {
 export const MAX_BATCH_JOB_URLS = 50_000;
 const DEFAULT_MS_PER_URL = 9_000;
 const BATCH_WORKER_CONCURRENCY = 2;
+const BATCH_ITEM_MAX_ATTEMPTS = 3;
+const BATCH_RETRY_BASE_DELAY_MS = 1_500;
+const BATCH_RETRY_MAX_DELAY_MS = 12_000;
+const DOMAIN_FAILURE_COOLDOWN_BASE_MS = 2_000;
+const DOMAIN_FAILURE_COOLDOWN_MAX_MS = 20_000;
+const RETRYABLE_ERROR_CODES = new Set<ExtractErrorCode>(['TIMEOUT', 'FETCH_FAILED']);
 
 const BOT_UA_MARKERS = [
   'bot',
@@ -69,6 +75,36 @@ const BOT_UA_MARKERS = [
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function sleep(ms: number): Promise<void> {
+  const safeMs = Math.max(0, Math.floor(ms));
+  if (safeMs === 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, safeMs));
+}
+
+function getHostnameFromUrl(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return 'unknown-host';
+  }
+}
+
+function shouldRetryFailure(errorCode: string): boolean {
+  return RETRYABLE_ERROR_CODES.has(errorCode as ExtractErrorCode);
+}
+
+function computeRetryDelayMs(attemptNumber: number): number {
+  const exponent = Math.max(0, attemptNumber - 1);
+  const delay = BATCH_RETRY_BASE_DELAY_MS * 2 ** exponent;
+  return Math.min(BATCH_RETRY_MAX_DELAY_MS, delay);
+}
+
+function computeDomainCooldownMs(consecutiveFailures: number): number {
+  const exponent = Math.max(0, consecutiveFailures - 1);
+  const delay = DOMAIN_FAILURE_COOLDOWN_BASE_MS * 2 ** exponent;
+  return Math.min(DOMAIN_FAILURE_COOLDOWN_MAX_MS, delay);
 }
 
 function parseUrl(value: string): string | null {
@@ -547,51 +583,77 @@ async function runJob(jobId: string): Promise<void> {
     const item = claimNextPendingItem(jobId);
     if (!item) break;
 
+    const hostname = getHostnameFromUrl(item.url);
     const startedAt = Date.now();
+    let completed = false;
+    let lastErrorCode = 'EXTRACTION_FAILED';
+    let lastErrorMessage = 'Extraction failed for this URL.';
 
-    try {
-      const result = await extractFromUrl(item.url, config.imagesMode);
-      const durationMs = Date.now() - startedAt;
+    for (let attempt = 1; attempt <= BATCH_ITEM_MAX_ATTEMPTS; attempt += 1) {
+      await waitForDomainCooldown(hostname);
 
-      if (!result.success) {
-        markItemFailure({
+      try {
+        const result = await extractFromUrl(item.url, config.imagesMode);
+
+        if (!result.success) {
+          lastErrorCode = result.errorCode || 'EXTRACTION_FAILED';
+          lastErrorMessage = result.errorMessage || 'Extraction failed for this URL.';
+
+          if (shouldRetryFailure(lastErrorCode) && attempt < BATCH_ITEM_MAX_ATTEMPTS) {
+            const domainCooldownMs = markDomainTransientFailure(hostname);
+            const retryDelayMs = computeRetryDelayMs(attempt);
+            await sleep(Math.max(domainCooldownMs, retryDelayMs));
+            continue;
+          }
+
+          break;
+        }
+
+        const extractionId = storeExtractSnapshot({
+          title: result.title,
+          byline: result.byline,
+          siteName: result.siteName,
+          publishedTime: result.publishedTime,
+          sourceUrl: result.sourceUrl,
+          textContent: result.textContent,
+          contentVariants: result.contentVariants,
+        });
+
+        markDomainSuccess(hostname);
+        markItemSuccess({
           jobId,
           itemId: item.id,
-          durationMs,
-          errorCode: result.errorCode || 'EXTRACTION_FAILED',
-          errorMessage: result.errorMessage || 'Extraction failed for this URL.',
+          durationMs: Date.now() - startedAt,
+          extractionId,
+          sourceUrl: result.sourceUrl,
+          title: result.title,
         });
-        continue;
+        completed = true;
+        break;
+      } catch (error) {
+        lastErrorCode = 'EXTRACTION_FAILED';
+        lastErrorMessage = error instanceof Error ? error.message : 'Unexpected extraction error.';
+
+        if (attempt < BATCH_ITEM_MAX_ATTEMPTS) {
+          const domainCooldownMs = markDomainTransientFailure(hostname);
+          const retryDelayMs = computeRetryDelayMs(attempt);
+          await sleep(Math.max(domainCooldownMs, retryDelayMs));
+          continue;
+        }
       }
-
-      const extractionId = storeExtractSnapshot({
-        title: result.title,
-        byline: result.byline,
-        siteName: result.siteName,
-        publishedTime: result.publishedTime,
-        sourceUrl: result.sourceUrl,
-        textContent: result.textContent,
-        contentVariants: result.contentVariants,
-      });
-
-      markItemSuccess({
-        jobId,
-        itemId: item.id,
-        durationMs,
-        extractionId,
-        sourceUrl: result.sourceUrl,
-        title: result.title,
-      });
-    } catch (error) {
-      const durationMs = Date.now() - startedAt;
-      markItemFailure({
-        jobId,
-        itemId: item.id,
-        durationMs,
-        errorCode: 'EXTRACTION_FAILED',
-        errorMessage: error instanceof Error ? error.message : 'Unexpected extraction error.',
-      });
     }
+
+    if (completed) {
+      continue;
+    }
+
+    markItemFailure({
+      jobId,
+      itemId: item.id,
+      durationMs: Date.now() - startedAt,
+      errorCode: lastErrorCode,
+      errorMessage: lastErrorMessage,
+    });
   }
 
   finalizeJob(jobId);
@@ -600,6 +662,7 @@ async function runJob(jobId: string): Promise<void> {
 type QueueRuntime = {
   running: boolean;
   bootstrapped: boolean;
+  domainCooldowns: Map<string, { nextAllowedAt: number; consecutiveFailures: number }>;
 };
 
 declare global {
@@ -612,10 +675,45 @@ function getRuntime(): QueueRuntime {
     global.__clearpageBatchQueue = {
       running: false,
       bootstrapped: false,
+      domainCooldowns: new Map(),
     };
   }
 
+  if (!global.__clearpageBatchQueue.domainCooldowns) {
+    global.__clearpageBatchQueue.domainCooldowns = new Map();
+  }
+
   return global.__clearpageBatchQueue;
+}
+
+async function waitForDomainCooldown(hostname: string): Promise<void> {
+  const runtime = getRuntime();
+  const state = runtime.domainCooldowns.get(hostname);
+  if (!state) return;
+
+  const waitMs = state.nextAllowedAt - Date.now();
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+}
+
+function markDomainSuccess(hostname: string): void {
+  const runtime = getRuntime();
+  runtime.domainCooldowns.delete(hostname);
+}
+
+function markDomainTransientFailure(hostname: string): number {
+  const runtime = getRuntime();
+  const previous = runtime.domainCooldowns.get(hostname);
+  const consecutiveFailures = (previous?.consecutiveFailures || 0) + 1;
+  const cooldownMs = computeDomainCooldownMs(consecutiveFailures);
+
+  runtime.domainCooldowns.set(hostname, {
+    consecutiveFailures,
+    nextAllowedAt: Date.now() + cooldownMs,
+  });
+
+  return cooldownMs;
 }
 
 function bootstrapQueueState(): void {

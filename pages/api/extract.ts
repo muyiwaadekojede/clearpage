@@ -7,6 +7,121 @@ import { batchExtractRateLimiter, extractRateLimiter } from '@/lib/rateLimit';
 import type { ExtractResponse, ImageMode } from '@/lib/types';
 
 const VALID_IMAGE_MODES: ImageMode[] = ['on', 'off', 'captions'];
+const HOMEPAGE_MAX_ATTEMPTS = 3;
+const HOMEPAGE_RETRY_BASE_DELAY_MS = 1_000;
+const HOMEPAGE_RETRY_MAX_DELAY_MS = 8_000;
+const HOMEPAGE_DOMAIN_COOLDOWN_BASE_MS = 2_000;
+const HOMEPAGE_DOMAIN_COOLDOWN_MAX_MS = 16_000;
+
+type DomainCooldownState = {
+  nextAllowedAt: number;
+  consecutiveFailures: number;
+};
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __clearpageExtractDomainCooldowns: Map<string, DomainCooldownState> | undefined;
+}
+
+function getDomainCooldownStore(): Map<string, DomainCooldownState> {
+  if (!global.__clearpageExtractDomainCooldowns) {
+    global.__clearpageExtractDomainCooldowns = new Map<string, DomainCooldownState>();
+  }
+
+  return global.__clearpageExtractDomainCooldowns;
+}
+
+function sleep(ms: number): Promise<void> {
+  const safeMs = Math.max(0, Math.floor(ms));
+  if (safeMs === 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, safeMs));
+}
+
+function getHostFromUrl(rawUrl: string): string {
+  try {
+    return new URL(rawUrl).hostname.toLowerCase();
+  } catch {
+    return 'unknown-host';
+  }
+}
+
+function isRetryableExtractFailure(response: ExtractResponse): boolean {
+  if (response.success) return false;
+  return response.errorCode === 'TIMEOUT' || response.errorCode === 'FETCH_FAILED';
+}
+
+function computeRetryDelayMs(attemptNumber: number): number {
+  const exponent = Math.max(0, attemptNumber - 1);
+  const delay = HOMEPAGE_RETRY_BASE_DELAY_MS * 2 ** exponent;
+  return Math.min(HOMEPAGE_RETRY_MAX_DELAY_MS, delay);
+}
+
+function computeDomainCooldownMs(consecutiveFailures: number): number {
+  const exponent = Math.max(0, consecutiveFailures - 1);
+  const delay = HOMEPAGE_DOMAIN_COOLDOWN_BASE_MS * 2 ** exponent;
+  return Math.min(HOMEPAGE_DOMAIN_COOLDOWN_MAX_MS, delay);
+}
+
+async function waitForDomainCooldown(hostname: string): Promise<void> {
+  const store = getDomainCooldownStore();
+  const cooldown = store.get(hostname);
+  if (!cooldown) return;
+
+  const waitMs = cooldown.nextAllowedAt - Date.now();
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+}
+
+function markDomainSuccess(hostname: string): void {
+  const store = getDomainCooldownStore();
+  store.delete(hostname);
+}
+
+function markDomainTransientFailure(hostname: string): number {
+  const store = getDomainCooldownStore();
+  const previous = store.get(hostname);
+  const consecutiveFailures = (previous?.consecutiveFailures || 0) + 1;
+  const cooldownMs = computeDomainCooldownMs(consecutiveFailures);
+
+  store.set(hostname, {
+    consecutiveFailures,
+    nextAllowedAt: Date.now() + cooldownMs,
+  });
+
+  return cooldownMs;
+}
+
+async function extractWithHomepageRetries(url: string, images: ImageMode): Promise<ExtractResponse> {
+  const hostname = getHostFromUrl(url);
+  let lastResult: ExtractResponse = {
+    success: false,
+    errorCode: 'EXTRACTION_FAILED',
+    errorMessage: 'Extraction failed for this URL.',
+  };
+
+  for (let attempt = 1; attempt <= HOMEPAGE_MAX_ATTEMPTS; attempt += 1) {
+    await waitForDomainCooldown(hostname);
+    const result = await extractFromUrl(url, images);
+
+    if (result.success) {
+      markDomainSuccess(hostname);
+      return result;
+    }
+
+    lastResult = result;
+
+    if (!isRetryableExtractFailure(result) || attempt >= HOMEPAGE_MAX_ATTEMPTS) {
+      return result;
+    }
+
+    const domainCooldownMs = markDomainTransientFailure(hostname);
+    const retryDelayMs = computeRetryDelayMs(attempt);
+    await sleep(Math.max(domainCooldownMs, retryDelayMs));
+  }
+
+  return lastResult;
+}
 
 function getIp(req: NextApiRequest): string {
   const forwarded = req.headers['x-forwarded-for'];
@@ -88,7 +203,9 @@ export default async function handler(
     ? (body.images as ImageMode)
     : 'on';
 
-  const result = await extractFromUrl(body.url, images);
+  const result = isBatchRequest
+    ? await extractFromUrl(body.url, images)
+    : await extractWithHomepageRetries(body.url, images);
 
   if (!result.success) {
     trackAnalyticsEvent(req, {
