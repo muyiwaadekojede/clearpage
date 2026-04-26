@@ -93,7 +93,7 @@ export function BatchUrlPanel({
   const visibleSuccessCount = results.filter((row) => row.status === 'success').length;
 
   return (
-    <section className="mt-7 rounded-2xl border border-[var(--color-border)] bg-white/82 p-4 text-left shadow-sm backdrop-blur">
+    <section className="mt-7 rounded-2xl border border-[var(--color-border)] bg-white p-4 text-left">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-semibold text-[var(--color-ink)]">Batch URL Workspace</h2>
@@ -102,21 +102,13 @@ export function BatchUrlPanel({
           </p>
         </div>
 
-        <div
-          className="relative grid size-20 place-items-center rounded-full"
-          style={{
-            background: `conic-gradient(var(--color-accent) ${fill}%, color-mix(in srgb, var(--color-accent) 18%, transparent) ${fill}% 100%)`,
-          }}
-          aria-label="Batch progress"
-        >
-          <div className="grid size-[calc(100%-8px)] place-items-center rounded-full border border-[var(--color-border)] bg-white/95 text-center">
-            <span className="text-sm font-semibold text-[var(--color-ink)]">{fill}%</span>
-          </div>
+        <div className="grid size-20 place-items-center rounded-full border-2 border-[var(--color-border)] bg-white text-center">
+          <span className="text-sm font-semibold text-[var(--color-ink)]">{fill}%</span>
         </div>
       </div>
 
       <div className="mt-4 grid gap-3">
-        <label htmlFor="batch-urls" className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+        <label htmlFor="batch-urls" className="text-xs font-semibold text-[var(--color-muted)]">
           URLs Block
         </label>
         <textarea
@@ -124,8 +116,8 @@ export function BatchUrlPanel({
           value={urlsInput}
           onChange={(event) => onUrlsInputChange(event.target.value)}
           placeholder="https://example.com/article-1&#10;https://example.com/article-2"
-          rows={8}
-          className="w-full rounded-xl border border-[var(--color-border)] bg-white px-4 py-3 text-sm leading-6 text-[var(--color-ink)] outline-none transition focus:border-[var(--color-accent)] focus:ring-4 focus:ring-[color:color-mix(in_srgb,var(--color-accent)_18%,transparent)]"
+          rows={6}
+          className="w-full rounded-xl border border-[var(--color-border)] bg-white px-4 py-3 text-sm leading-6 text-[var(--color-ink)] outline-none transition focus:border-[var(--color-accent)]"
         />
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-muted)]">
@@ -211,7 +203,7 @@ export function BatchUrlPanel({
       </div>
 
       {results.length > 0 ? (
-        <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white/80 p-3">
+        <div className="mt-4 rounded-xl border border-[var(--color-border)] bg-white p-3">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--color-muted)]">
             <span>Successful: {successCount.toLocaleString()}</span>
             <span>Failed: {failureCount.toLocaleString()}</span>
@@ -231,12 +223,12 @@ export function BatchUrlPanel({
                   <span
                     className={`rounded-full px-2 py-0.5 font-semibold ${
                       row.status === 'success'
-                        ? 'bg-[#e7f5f4] text-[var(--color-accent)]'
+                        ? 'border border-[var(--color-accent)] bg-white text-[var(--color-accent)]'
                         : row.status === 'failure'
-                          ? 'bg-[#ffecec] text-red-700'
+                          ? 'border border-red-700 bg-white text-red-700'
                           : row.status === 'running'
-                            ? 'bg-[#edf4fd] text-[#1f5ea8]'
-                            : 'bg-[#f3f4f6] text-[var(--color-muted)]'
+                            ? 'border border-[var(--color-border)] bg-white text-[var(--color-ink)]'
+                            : 'border border-[var(--color-border)] bg-white text-[var(--color-muted)]'
                     }`}
                   >
                     {row.status}

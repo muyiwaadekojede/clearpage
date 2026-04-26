@@ -431,46 +431,50 @@ export default function BatchPage() {
   }
 
   return (
-    <main className="cp-shell cp-enter mx-auto w-full max-w-6xl px-6 py-10">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="logo-mark text-5xl font-semibold text-[var(--color-ink)]">Batch Workspace</h1>
-          <p className="mt-2 text-sm text-[var(--color-muted)]">
-            Dedicated large-run processing page. Homepage stays clean and focused.
-          </p>
+    <main className="cp-shell cp-enter mx-auto w-full max-w-5xl px-6 py-12">
+      <div className="mx-auto max-w-4xl">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="logo-mark text-5xl font-semibold text-[var(--color-ink)]">Batch Workspace</h1>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">
+              Dedicated large-run processing page.
+            </p>
+          </div>
+
+          <Link
+            href="/"
+            className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold text-[var(--color-ink)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+          >
+            Back to Homepage
+          </Link>
         </div>
 
-        <Link
-          href="/"
-          className="rounded-lg border border-[var(--color-border)] bg-white/80 px-4 py-2 text-sm font-semibold text-[var(--color-ink)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
-        >
-          Back to Homepage
-        </Link>
+        <div className="mt-10">
+          <BatchUrlPanel
+            urlsInput={batchUrlsInput}
+            onUrlsInputChange={setBatchUrlsInput}
+            onSubmit={() => void handleBatchSubmit()}
+            format={batchFormat}
+            onFormatChange={setBatchFormat}
+            processing={batchProcessing}
+            downloadingAll={batchDownloadingAll}
+            jobId={batchJobId}
+            parsedCount={parsedBatchUrls.length}
+            maxUrls={BATCH_MAX_URLS}
+            processedCount={batchProcessedCount}
+            totalCount={batchTotalCount}
+            successCount={batchSuccessCount}
+            failureCount={batchFailureCount}
+            etaText={formatDuration(batchEtaMs)}
+            estimateText={formatDuration(batchEstimatedTotalMs)}
+            downloadEstimateText={formatDuration(batchDownloadEstimateMs)}
+            runMessage={batchRunMessage}
+            results={batchResults}
+            onDownloadOne={(row) => void downloadBatchItem(row)}
+            onDownloadAll={() => void handleDownloadAllBatch()}
+          />
+        </div>
       </div>
-
-      <BatchUrlPanel
-        urlsInput={batchUrlsInput}
-        onUrlsInputChange={setBatchUrlsInput}
-        onSubmit={() => void handleBatchSubmit()}
-        format={batchFormat}
-        onFormatChange={setBatchFormat}
-        processing={batchProcessing}
-        downloadingAll={batchDownloadingAll}
-        jobId={batchJobId}
-        parsedCount={parsedBatchUrls.length}
-        maxUrls={BATCH_MAX_URLS}
-        processedCount={batchProcessedCount}
-        totalCount={batchTotalCount}
-        successCount={batchSuccessCount}
-        failureCount={batchFailureCount}
-        etaText={formatDuration(batchEtaMs)}
-        estimateText={formatDuration(batchEstimatedTotalMs)}
-        downloadEstimateText={formatDuration(batchDownloadEstimateMs)}
-        runMessage={batchRunMessage}
-        results={batchResults}
-        onDownloadOne={(row) => void downloadBatchItem(row)}
-        onDownloadAll={() => void handleDownloadAllBatch()}
-      />
     </main>
   );
 }
