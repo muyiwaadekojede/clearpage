@@ -25,6 +25,9 @@ function fmt(value: number): string {
 
 export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageMetrics }: UrlInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const hasUsageData =
+    !!usageMetrics &&
+    (usageMetrics.totalUsers > 0 || usageMetrics.pagesParsedTotal > 0 || usageMetrics.docsExportedTotal > 0);
 
   function submitCurrentUrl(): void {
     const currentValue = inputRef.current?.value ?? url;
@@ -36,19 +39,6 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageM
       <div className="w-full max-w-3xl text-center">
         <h1 className="logo-mark text-6xl font-semibold text-[var(--color-ink)]">Clearpage</h1>
         <p className="mt-2 text-lg text-[var(--color-muted)]">{subtitle}</p>
-        {usageMetrics ? (
-          <div className="mt-2 text-sm text-[var(--color-muted)]">
-            <p>Growth window: last 7 days</p>
-            <p className="mt-1">
-              <span>{fmt(usageMetrics.totalUsers)} users </span>
-              <span className="text-[var(--color-accent)]">(+{fmt(usageMetrics.usersLast7Days)})</span>
-              <span> · {fmt(usageMetrics.pagesParsedTotal)} pages parsed </span>
-              <span className="text-[var(--color-accent)]">(+{fmt(usageMetrics.pagesParsedLast7Days)})</span>
-              <span> · {fmt(usageMetrics.docsExportedTotal)} docs exported </span>
-              <span className="text-[var(--color-accent)]">(+{fmt(usageMetrics.docsExportedLast7Days)})</span>
-            </p>
-          </div>
-        ) : null}
 
         <div className="mt-12 flex flex-col gap-4 md:flex-row md:items-center">
           <label htmlFor="url-input" className="sr-only">
@@ -82,6 +72,26 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageM
         <p className="mt-3 min-h-5 text-sm text-[var(--color-muted)]">
           {loading ? 'Fetching page and extracting content...' : ''}
         </p>
+
+        {hasUsageData && usageMetrics ? (
+          <p className="mt-2 text-sm text-[var(--color-muted)]">
+            <span>
+              <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.totalUsers)}</span> users{' '}
+              <span className="text-[var(--color-accent)]">+{fmt(usageMetrics.usersLast7Days)}</span>
+            </span>
+            <span aria-hidden="true"> · </span>
+            <span>
+              <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.pagesParsedTotal)}</span>{' '}
+              parsed <span className="text-[var(--color-accent)]">+{fmt(usageMetrics.pagesParsedLast7Days)}</span>
+            </span>
+            <span aria-hidden="true"> · </span>
+            <span>
+              <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.docsExportedTotal)}</span>{' '}
+              exports <span className="text-[var(--color-accent)]">+{fmt(usageMetrics.docsExportedLast7Days)}</span>
+            </span>
+            <span className="ml-2 text-xs">7d</span>
+          </p>
+        ) : null}
 
         <p className="mt-5 text-sm text-[var(--color-muted)]">
           <Link href="/batch" className="text-[var(--color-accent)] hover:underline">
