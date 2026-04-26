@@ -21,27 +21,29 @@
     "e2e:brand-matrix": "node scripts/e2e-brand-matrix.mjs"
   },
   "dependencies": {
-    "next": "^16.2.4",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "@mozilla/readability": "^0.6.0",
-    "jsdom": "^29.0.2",
-    "turndown": "^7.2.4",
+    "@sparticuz/chromium": "^147.0.2",
+    "better-sqlite3": "^12.9.0",
     "docx": "^9.5.0",
     "isomorphic-dompurify": "^3.9.0",
+    "jsdom": "^29.0.2",
+    "mammoth": "^1.12.0",
+    "next": "^16.2.4",
+    "pdf-parse": "^2.4.5",
     "playwright": "^1.59.1",
-    "@sparticuz/chromium": "^147.0.2",
-    "better-sqlite3": "^12.9.0"
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "turndown": "^7.2.4"
   },
   "devDependencies": {
-    "typescript": "^5.8.0",
+    "@tailwindcss/postcss": "^4.2.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jsdom": "^21.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
-    "@types/jsdom": "^21.0.0",
     "@types/turndown": "^5.0.0",
-    "@types/better-sqlite3": "^7.6.13",
+    "postcss": "^8.5.0",
     "tailwindcss": "^4.2.3",
-    "@tailwindcss/postcss": "^4.2.3",
-    "postcss": "^8.5.0"
+    "typescript": "^5.8.0"
   }
 }

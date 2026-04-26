@@ -97,7 +97,7 @@ function parseIsoMs(value: string | null): number {
 
 export default function BatchPage() {
   const [batchUrlsInput, setBatchUrlsInput] = useState('');
-  const [batchFormat, setBatchFormat] = useState<ExportFormat>('pdf');
+  const [batchFormat, setBatchFormat] = useState<ExportFormat>('md');
   const [batchDownloadingAll, setBatchDownloadingAll] = useState(false);
   const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
   const [batchJobId, setBatchJobId] = useState('');
@@ -250,13 +250,33 @@ export default function BatchPage() {
   async function downloadBatchItem(row: BatchItemResult): Promise<void> {
     if (row.status !== 'success') return;
     if (!row.extractionId && row.sourceUrl) {
-      const link = document.createElement('a');
-      link.href = row.sourceUrl;
-      link.rel = 'noopener noreferrer';
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      const response = await fetch('/api/direct-file', {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          url: row.sourceUrl,
+          format: batchFormat,
+        }),
+      });
+
+      if (!response.ok) {
+        const raw = await response.text();
+        throw new Error(raw || `Direct file download failed (${batchFormat}).`);
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('content-disposition') || '';
+      const match = contentDisposition.match(/filename="?([^\"]+)"?/i);
+      const fallbackName = row.title ? row.title.replace(/\s+/g, '-').toLowerCase() : 'clearpage-direct-file';
+      const filename = match?.[1] || `${fallbackName}.${batchFormat}`;
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
       return;
     }
 

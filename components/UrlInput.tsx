@@ -10,6 +10,11 @@ type UrlInputProps = {
   loading: boolean;
   subtitle: string;
   statusMessage?: string;
+  directFileUrl?: string;
+  directFileFormat?: 'pdf' | 'txt' | 'md' | 'docx';
+  directFileDownloading?: boolean;
+  onDirectFileFormatChange?: (format: 'pdf' | 'txt' | 'md' | 'docx') => void;
+  onDirectFileDownload?: () => void;
   usageMetrics?: {
     totalUsers: number;
     usersLast7Days: number;
@@ -28,7 +33,20 @@ function wordForCount(value: number, singular: string, plural: string): string {
   return Number(value) === 1 ? singular : plural;
 }
 
-export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, statusMessage, usageMetrics }: UrlInputProps) {
+export function UrlInput({
+  url,
+  onUrlChange,
+  onSubmit,
+  loading,
+  subtitle,
+  statusMessage,
+  directFileUrl,
+  directFileFormat,
+  directFileDownloading,
+  onDirectFileFormatChange,
+  onDirectFileDownload,
+  usageMetrics,
+}: UrlInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const hasUsageData =
     !!usageMetrics &&
@@ -82,6 +100,31 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, status
         <p className="mt-3 min-h-5 text-sm text-[var(--color-muted)]">
           {loading ? 'Fetching page and extracting content...' : statusMessage || ''}
         </p>
+        {directFileUrl ? (
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-sm">
+            <span className="text-[var(--color-muted)]">Direct file detected</span>
+            <select
+              value={directFileFormat || 'md'}
+              onChange={(event) =>
+                onDirectFileFormatChange?.(event.target.value as 'pdf' | 'txt' | 'md' | 'docx')
+              }
+              className="h-9 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm outline-none focus:border-[var(--color-accent)]"
+            >
+              <option value="md">MD</option>
+              <option value="docx">DOCX</option>
+              <option value="txt">TXT</option>
+              <option value="pdf">PDF</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => onDirectFileDownload?.()}
+              disabled={!!directFileDownloading}
+              className="h-9 rounded-lg border border-[var(--color-border)] bg-white px-3 text-sm font-semibold text-[var(--color-ink)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {directFileDownloading ? 'Downloading...' : 'Download'}
+            </button>
+          </div>
+        ) : null}
 
         {hasUsageData && usageMetrics ? (
           <p className="mt-2 text-sm text-[var(--color-muted)]">

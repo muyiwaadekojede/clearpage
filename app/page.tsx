@@ -59,6 +59,9 @@ export default function Page() {
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
   const [inputStatusMessage, setInputStatusMessage] = useState('');
+  const [directFileUrl, setDirectFileUrl] = useState('');
+  const [directFileFormat, setDirectFileFormat] = useState<ExportFormat>('md');
+  const [directFileDownloading, setDirectFileDownloading] = useState(false);
   const [usageMetrics, setUsageMetrics] = useState<{
     totalUsers: number;
     usersLast7Days: number;
@@ -139,6 +142,50 @@ export default function Page() {
     };
   }
 
+  async function downloadDirectFile(sourceUrl: string, format: ExportFormat): Promise<void> {
+    setDirectFileDownloading(true);
+
+    try {
+      const response = await fetch('/api/direct-file', {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({
+          url: sourceUrl,
+          format,
+        }),
+      });
+
+      if (!response.ok) {
+        const raw = await response.text();
+        throw new Error(raw || 'Direct file download failed.');
+      }
+
+      const blob = await response.blob();
+      const contentDisposition = response.headers.get('content-disposition') || '';
+      const match = contentDisposition.match(/filename="?([^\"]+)"?/i);
+      const filename = match?.[1] || `direct-file.${format}`;
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+
+      void trackClientEvent({
+        eventName: 'direct_file_download_triggered',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+      });
+    } finally {
+      setDirectFileDownloading(false);
+    }
+  }
+
   async function handleExtract(urlValue?: string): Promise<void> {
     const targetUrl = (urlValue ?? url).trim();
 
@@ -168,6 +215,7 @@ export default function Page() {
     setExtracting(true);
     setFailure(null);
     setInputStatusMessage('');
+    setDirectFileUrl('');
 
     try {
       const response = await fetch('/api/extract', {
@@ -181,25 +229,19 @@ export default function Page() {
       if (!response.ok || !json.success) {
         const errorCode = ((json as ExtractFailurePayload).errorCode || 'EXTRACTION_FAILED') as ExtractErrorCode;
         if (errorCode === 'DIRECT_FILE_URL') {
-          const directLink = document.createElement('a');
-          directLink.href = targetUrl;
-          directLink.rel = 'noopener noreferrer';
-          directLink.target = '_blank';
-          document.body.appendChild(directLink);
-          directLink.click();
-          directLink.remove();
-
-          void trackClientEvent({
-            eventName: 'direct_file_download_triggered',
-            eventGroup: 'extract',
-            status: 'success',
-            pagePath: '/',
-            attemptedUrl: targetUrl,
-          });
+          setDirectFileUrl(targetUrl);
+          setDirectFileFormat('md');
 
           setFailure(null);
           setResult(null);
-          setInputStatusMessage('Direct file detected. Opened in a new tab for download.');
+          setInputStatusMessage('Direct file detected. Downloading as MD...');
+          try {
+            await downloadDirectFile(targetUrl, 'md');
+            setInputStatusMessage('Direct file downloaded as MD. Choose another format if needed.');
+          } catch (downloadError) {
+            console.error(downloadError);
+            setInputStatusMessage('Direct file download failed. Choose a format and retry.');
+          }
           return;
         }
 
@@ -235,6 +277,7 @@ export default function Page() {
 
       setResult(json);
       setInputStatusMessage('');
+      setDirectFileUrl('');
     } catch (error) {
       void trackClientEvent({
         eventName: 'extract_result',
@@ -248,8 +291,20 @@ export default function Page() {
       console.error(error);
       setFailure({ errorCode: 'EXTRACTION_FAILED', url: targetUrl });
       setResult(null);
+      setDirectFileUrl('');
     } finally {
       setExtracting(false);
+    }
+  }
+
+  async function handleDirectFileDownload(): Promise<void> {
+    if (!directFileUrl) return;
+
+    try {
+      await downloadDirectFile(directFileUrl, directFileFormat);
+    } catch (error) {
+      console.error(error);
+      setInputStatusMessage('Direct file download failed. Try another format.');
     }
   }
 
@@ -371,6 +426,8 @@ export default function Page() {
     setResult(null);
     setFailure(null);
     setInputStatusMessage('');
+    setDirectFileUrl('');
+    setDirectFileFormat('md');
     setUrl('');
     setImages('on');
     setSettings((current) => ({ ...DEFAULT_SETTINGS, colorTheme: current.colorTheme }));
@@ -389,11 +446,23 @@ export default function Page() {
         <div className="relative">
           <UrlInput
             url={url}
-            onUrlChange={setUrl}
+            onUrlChange={(nextUrl) => {
+              setUrl(nextUrl);
+              if (directFileUrl) {
+                setDirectFileUrl('');
+                setDirectFileFormat('md');
+                setInputStatusMessage('');
+              }
+            }}
             onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
             loading={extracting}
             subtitle="Paste any URL. Get a clean, exportable document."
             statusMessage={inputStatusMessage}
+            directFileUrl={directFileUrl}
+            directFileFormat={directFileFormat}
+            directFileDownloading={directFileDownloading}
+            onDirectFileFormatChange={(format) => setDirectFileFormat(format)}
+            onDirectFileDownload={() => void handleDirectFileDownload()}
             usageMetrics={usageMetrics}
           />
         </div>

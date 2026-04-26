@@ -145,7 +145,7 @@ export function normalizeBatchUrls(rawUrls: string[]): string[] {
 
 function normalizeExportFormat(value: unknown): ExportFormat {
   if (value === 'txt' || value === 'md' || value === 'docx' || value === 'pdf') return value;
-  return 'pdf';
+  return 'md';
 }
 
 function normalizeImageMode(value: unknown): ImageMode {
