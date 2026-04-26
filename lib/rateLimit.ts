@@ -40,3 +40,4 @@ export class InMemoryRateLimiter {
 }
 
 export const extractRateLimiter = new InMemoryRateLimiter(10, 60_000);
+export const batchExtractRateLimiter = new InMemoryRateLimiter(12_000, 60 * 60_000);

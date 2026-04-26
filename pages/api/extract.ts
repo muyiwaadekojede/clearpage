@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { trackAnalyticsEvent } from '@/lib/analytics';
 import { storeExtractSnapshot } from '@/lib/extractCache';
 import { extractFromUrl } from '@/lib/extract';
-import { extractRateLimiter } from '@/lib/rateLimit';
+import { batchExtractRateLimiter, extractRateLimiter } from '@/lib/rateLimit';
 import type { ExtractResponse, ImageMode } from '@/lib/types';
 
 const VALID_IMAGE_MODES: ImageMode[] = ['on', 'off', 'captions'];
@@ -31,7 +31,9 @@ export default async function handler(
   }
 
   const ip = getIp(req);
-  const rate = extractRateLimiter.consume(ip);
+  const rawBatchHeader = req.headers['x-clearpage-batch'];
+  const isBatchRequest = rawBatchHeader === '1' || (Array.isArray(rawBatchHeader) && rawBatchHeader[0] === '1');
+  const rate = isBatchRequest ? batchExtractRateLimiter.consume(ip) : extractRateLimiter.consume(ip);
   const body = req.body as { url?: string; images?: ImageMode };
 
   trackAnalyticsEvent(req, {
@@ -43,10 +45,11 @@ export default async function handler(
     metadata: {
       images: body?.images ?? 'on',
       rateRemaining: rate.remaining,
+      isBatchRequest,
     },
   });
 
-  res.setHeader('X-RateLimit-Limit', '10');
+  res.setHeader('X-RateLimit-Limit', isBatchRequest ? '12000' : '10');
   res.setHeader('X-RateLimit-Remaining', String(rate.remaining));
   res.setHeader('X-RateLimit-Reset', String(Math.ceil(rate.resetAt / 1000)));
 

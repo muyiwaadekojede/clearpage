@@ -42,6 +42,16 @@ export type AnalyticsDashboard = {
   recentSessions: Array<Record<string, unknown>>;
 };
 
+export type PublicUsageMetrics = {
+  totalUsers: number;
+  usersToday: number;
+  usersLast7Days: number;
+  totalTrackedSessions: number;
+  excludedBotSessions: number;
+  excludedLowQualitySessions: number;
+  updatedAt: string;
+};
+
 function trimNullable(value: unknown, maxLen = 1000): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
@@ -391,4 +401,139 @@ export function getSessionJourney(sessionId: string): {
     .all(safeSessionId) as Array<Record<string, unknown>>;
 
   return { session: session || null, events };
+}
+
+function isLikelyBotUserAgent(userAgent: string): boolean {
+  const lowered = (userAgent || '').toLowerCase();
+  if (!lowered) return true;
+
+  const markers = [
+    'bot',
+    'spider',
+    'crawl',
+    'crawler',
+    'slurp',
+    'headless',
+    'phantom',
+    'python-requests',
+    'python-urllib',
+    'curl/',
+    'wget/',
+    'uptime',
+    'monitor',
+    'httpclient',
+    'postmanruntime',
+  ];
+
+  return markers.some((marker) => lowered.includes(marker));
+}
+
+export function getPublicUsageMetrics(now = new Date()): PublicUsageMetrics {
+  const utcStartToday = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
+  const utcStart7Days = new Date(utcStartToday.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+  const sessions = db
+    .prepare(
+      `
+      SELECT
+        s.session_id AS sessionId,
+        s.started_at AS startedAt,
+        s.last_seen_at AS lastSeenAt,
+        COALESCE(s.first_user_agent, '') AS firstUserAgent,
+        (
+          SELECT COUNT(*)
+          FROM analytics_events e
+          WHERE e.session_id = s.session_id
+        ) AS eventCount,
+        (
+          SELECT COUNT(*)
+          FROM analytics_events e
+          WHERE e.session_id = s.session_id
+            AND (
+              e.event_group IN ('extract', 'export', 'settings')
+              OR e.event_name IN (
+                'extract_submit',
+                'extract_result',
+                'batch_extract_submit',
+                'batch_extract_result',
+                'api_extract_request',
+                'api_extract_result',
+                'api_export_request',
+                'api_export_result'
+              )
+            )
+        ) AS toolEventCount,
+        (
+          SELECT COUNT(*)
+          FROM analytics_events e
+          WHERE e.session_id = s.session_id
+            AND e.status = 'success'
+        ) AS successEventCount
+      FROM analytics_sessions s
+      `,
+    )
+    .all() as Array<{
+    sessionId: string;
+    startedAt: string;
+    lastSeenAt: string;
+    firstUserAgent: string;
+    eventCount: number;
+    toolEventCount: number;
+    successEventCount: number;
+  }>;
+
+  let totalUsers = 0;
+  let usersToday = 0;
+  let usersLast7Days = 0;
+  let excludedBotSessions = 0;
+  let excludedLowQualitySessions = 0;
+
+  for (const session of sessions) {
+    const botLike = isLikelyBotUserAgent(session.firstUserAgent || '');
+    if (botLike) {
+      excludedBotSessions += 1;
+      continue;
+    }
+
+    const startedAtMs = Date.parse(session.startedAt || '');
+    const lastSeenAtMs = Date.parse(session.lastSeenAt || '');
+    const sessionDurationMs =
+      Number.isFinite(startedAtMs) && Number.isFinite(lastSeenAtMs)
+        ? Math.max(0, lastSeenAtMs - startedAtMs)
+        : 0;
+
+    const lowQuality =
+      Number(session.eventCount || 0) < 2 ||
+      Number(session.toolEventCount || 0) < 1 ||
+      (sessionDurationMs < 4_000 && Number(session.successEventCount || 0) === 0);
+
+    if (lowQuality) {
+      excludedLowQualitySessions += 1;
+      continue;
+    }
+
+    totalUsers += 1;
+
+    if (Number.isFinite(startedAtMs)) {
+      if (startedAtMs >= utcStartToday.getTime()) {
+        usersToday += 1;
+      }
+
+      if (startedAtMs >= utcStart7Days.getTime()) {
+        usersLast7Days += 1;
+      }
+    }
+  }
+
+  return {
+    totalUsers,
+    usersToday,
+    usersLast7Days,
+    totalTrackedSessions: sessions.length,
+    excludedBotSessions,
+    excludedLowQualitySessions,
+    updatedAt: now.toISOString(),
+  };
 }

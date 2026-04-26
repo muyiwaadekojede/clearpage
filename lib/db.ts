@@ -116,4 +116,60 @@ db.exec(`
   ON analytics_events(error_code)
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS batch_jobs (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    status TEXT NOT NULL,
+    export_format TEXT NOT NULL,
+    images_mode TEXT NOT NULL,
+    settings_json TEXT,
+    total_urls INTEGER NOT NULL,
+    processed_urls INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    average_duration_ms INTEGER,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    last_error_code TEXT,
+    last_error_message TEXT
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS batch_job_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    status TEXT NOT NULL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    extraction_id TEXT,
+    source_url TEXT,
+    title TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    FOREIGN KEY(job_id) REFERENCES batch_jobs(id)
+  )
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_batch_jobs_status_created
+  ON batch_jobs(status, created_at)
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_batch_items_job_position
+  ON batch_job_items(job_id, position)
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_batch_items_job_status
+  ON batch_job_items(job_id, status)
+`);
+
 export default db;

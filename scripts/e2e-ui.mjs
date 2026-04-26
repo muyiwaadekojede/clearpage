@@ -7,7 +7,7 @@ const page = await browser.newPage();
 
 try {
   await page.goto(baseUrl, { waitUntil: 'networkidle' });
-  await page.getByPlaceholder('https://example.com/article').fill('https://httpbin.org/html');
+  await page.locator('#url-input').fill('https://httpbin.org/html');
   await page.getByRole('button', { name: 'Read & Export' }).click();
 
   const pdfButton = page.getByRole('button', { name: 'Download PDF' }).first();
@@ -16,9 +16,9 @@ try {
   await pdfButton.waitFor({ state: 'visible', timeout: 10_000 });
   await page.getByRole('button', { name: 'New URL' }).first().click();
 
-  await page.getByPlaceholder('https://example.com/article').waitFor({ timeout: 10_000 });
+  await page.locator('#url-input').waitFor({ timeout: 10_000 });
 
-  await page.getByPlaceholder('https://example.com/article').fill('https://example.invalid');
+  await page.locator('#url-input').fill('https://example.invalid');
   await page.getByRole('button', { name: 'Read & Export' }).click();
 
   await page.getByRole('heading', { name: "We couldn't extract this page" }).waitFor({ timeout: 60_000 });
