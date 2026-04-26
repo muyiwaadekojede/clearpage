@@ -27,7 +27,7 @@ export function ImageToggle({ value, onChange }: ImageToggleProps) {
               onClick={() => onChange(option.value)}
               className={`rounded-lg px-2 py-2 text-sm font-medium transition ${
                 active
-                  ? 'bg-[var(--color-accent)] text-white shadow-sm'
+                  ? 'bg-[var(--color-accent)] text-white'
                   : 'text-[var(--preview-text)] hover:bg-[color:color-mix(in_srgb,var(--preview-text)_8%,transparent)]'
               }`}
               aria-pressed={active}

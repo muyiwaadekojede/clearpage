@@ -91,13 +91,13 @@ export function FailureModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6">
-      <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4 py-6">
+      <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-2xl border border-[var(--color-border)] bg-white p-6">
         <h2 className="text-3xl font-semibold text-[var(--color-ink)]">We couldn&apos;t extract this page</h2>
         <p className="mt-2 text-sm text-[var(--color-muted)]">{subtext}</p>
 
         {submitted ? (
-          <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-[#f3f8f8] p-4 text-sm text-[var(--color-ink)]">
+          <div className="mt-6 rounded-lg border border-[var(--color-border)] bg-white p-4 text-sm text-[var(--color-ink)]">
             Thank you. We&apos;ll look into this.
           </div>
         ) : (
@@ -135,7 +135,7 @@ export function FailureModal({
                 id="free-text"
                 value={freeText}
                 onChange={(event) => setFreeText(event.target.value)}
-                className="min-h-28 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[color:color-mix(in_srgb,var(--color-accent)_24%,transparent)]"
+                className="min-h-28 w-full rounded-lg border border-[var(--color-border)] px-3 py-2 text-sm outline-none focus:border-[var(--color-accent)]"
               />
             </div>
 

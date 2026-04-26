@@ -226,19 +226,19 @@ function SidebarBody({
           <ThemeSwatch
             label="Light"
             active={settings.colorTheme === 'light'}
-            style={{ background: '#faf9f6', borderColor: '#d4d9da' }}
+            style={{ background: '#faf9f6' }}
             onClick={() => updateSetting('colorTheme', 'light')}
           />
           <ThemeSwatch
             label="Dark"
             active={settings.colorTheme === 'dark'}
-            style={{ background: '#141b23', borderColor: '#2d3947' }}
+            style={{ background: '#141b23' }}
             onClick={() => updateSetting('colorTheme', 'dark')}
           />
           <ThemeSwatch
             label="Sepia"
             active={settings.colorTheme === 'sepia'}
-            style={{ background: '#f8eedb', borderColor: '#cdbb9f' }}
+            style={{ background: '#f8eedb' }}
             onClick={() => updateSetting('colorTheme', 'sepia')}
           />
         </div>
@@ -281,7 +281,7 @@ function ThemeSwatch({
       type="button"
       onClick={onClick}
       className={`rounded-lg border p-2 text-xs font-medium ${
-        active ? 'ring-2 ring-[var(--color-accent)] ring-offset-2' : ''
+        active ? 'border-[var(--color-accent)]' : 'border-[var(--preview-border)]'
       }`}
       style={style}
       aria-pressed={active}

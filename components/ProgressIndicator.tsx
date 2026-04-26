@@ -8,7 +8,7 @@ const STEPS = ['Fetching page...', 'Extracting content...', 'Processing images..
 
 export function ProgressIndicator({ activeStep }: ProgressIndicatorProps) {
   return (
-    <div className="mt-6 w-full rounded-xl border border-[var(--color-border)] bg-white/85 p-4 text-left shadow-sm">
+    <div className="mt-6 w-full rounded-xl border border-[var(--color-border)] bg-white p-4 text-left">
       <ol className="space-y-2">
         {STEPS.map((step, index) => {
           const isComplete = index < activeStep;

@@ -310,7 +310,7 @@ export default function AdminPage() {
   if (!authenticated) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-md items-center px-6 py-16">
-        <section className="w-full rounded-2xl border border-[var(--color-border)] bg-white/90 p-6 shadow-sm">
+        <section className="w-full rounded-2xl border border-[var(--color-border)] bg-white p-6">
           <h1 className="logo-mark text-4xl font-semibold">Admin Login</h1>
           <p className="mt-2 text-sm text-[var(--color-muted)]">Sign in to access Clearpage telemetry and feedback.</p>
 
@@ -377,21 +377,21 @@ export default function AdminPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="rounded-lg border border-[var(--color-border)] bg-white/85 px-3 py-2 text-xs text-[var(--color-muted)]">
+          <span className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-xs text-[var(--color-muted)]">
             {adminUsername ? `Signed in as ${adminUsername}` : 'Signed in'}
           </span>
           <button
             type="button"
             onClick={() => void refreshAll()}
             disabled={refreshing || loading}
-            className="rounded-lg border border-[var(--color-border)] bg-white/85 px-4 py-2 text-sm font-semibold hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-60"
+            className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {refreshing ? 'Refreshing...' : 'Refresh Data'}
           </button>
           <button
             type="button"
             onClick={() => void handleLogout()}
-            className="rounded-lg border border-[var(--color-border)] bg-white/85 px-4 py-2 text-sm font-semibold hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+            className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-2 text-sm font-semibold hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
             Logout
           </button>
@@ -455,8 +455,8 @@ export default function AdminPage() {
                       onClick={() => void loadSessionJourney(sessionId)}
                       className={`w-full rounded-lg border p-3 text-left ${
                         active
-                          ? 'border-[var(--color-accent)] bg-[#eef8f7]'
-                          : 'border-[var(--color-border)] bg-white/80'
+                          ? 'border-[var(--color-accent)] bg-white'
+                          : 'border-[var(--color-border)] bg-white'
                       }`}
                     >
                       <p className="truncate text-xs font-semibold text-[var(--color-ink)]">{sessionId}</p>
@@ -514,7 +514,7 @@ export default function AdminPage() {
                           </p>
                         ) : null}
                         {event.metadata ? (
-                          <pre className="mt-2 overflow-x-auto rounded bg-[#f6f7f8] p-2 text-[10px] text-[var(--color-muted)]">
+                          <pre className="mt-2 overflow-x-auto rounded border border-[var(--color-border)] bg-white p-2 text-[10px] text-[var(--color-muted)]">
                             {parseMetadata(event.metadata)}
                           </pre>
                         ) : null}
@@ -534,7 +534,7 @@ export default function AdminPage() {
 
               <div className="max-h-[420px] overflow-auto">
                 <table className="w-full min-w-[900px] text-left text-xs">
-                  <thead className="sticky top-0 bg-white/95">
+                  <thead className="sticky top-0 bg-white">
                     <tr>
                       <th className="px-2 py-2 font-semibold">Time</th>
                       <th className="px-2 py-2 font-semibold">Event</th>
@@ -577,11 +577,11 @@ export default function AdminPage() {
                   return (
                     <article
                       key={row.id}
-                      className="rounded-xl border border-[var(--color-border)] bg-white/85 p-4 shadow-sm"
+                      className="rounded-xl border border-[var(--color-border)] bg-white p-4"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                          <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">Submitted</p>
+                          <p className="text-xs text-[var(--color-muted)]">Submitted</p>
                           <p className="text-sm font-semibold">{toReadableDate(row.submitted_at)}</p>
                         </div>
                         <button
@@ -627,8 +627,8 @@ export default function AdminPage() {
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-white/85 p-3">
-      <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">{label}</p>
+    <div className="rounded-xl border border-[var(--color-border)] bg-white p-3">
+      <p className="text-xs text-[var(--color-muted)]">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-[var(--color-ink)]">{value}</p>
     </div>
   );
@@ -636,7 +636,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-white/85 p-4 shadow-sm">
+    <section className="rounded-2xl border border-[var(--color-border)] bg-white p-4">
       <h2 className="text-lg font-semibold text-[var(--color-ink)]">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
