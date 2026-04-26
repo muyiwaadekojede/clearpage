@@ -1,14 +1,11 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { FailureModal } from '@/components/FailureModal';
-import { ProgressIndicator } from '@/components/ProgressIndicator';
 import { ReadingPreview } from '@/components/ReadingPreview';
 import { SettingsSidebar } from '@/components/SettingsSidebar';
 import { UrlInput } from '@/components/UrlInput';
-import { UsageTrustInline } from '@/components/UsageTrustInline';
 import { getClientSessionId, trackClientEvent } from '@/lib/clientAnalytics';
 import type {
   ExportFormat,
@@ -21,16 +18,6 @@ import type {
 type FailureState = {
   errorCode: ExtractErrorCode;
   url: string;
-};
-
-type PublicMetrics = {
-  totalUsers: number;
-  usersToday: number;
-  usersLast7Days: number;
-  totalTrackedSessions: number;
-  excludedBotSessions: number;
-  excludedLowQualitySessions: number;
-  updatedAt: string;
 };
 
 type ExtractFailurePayload = {
@@ -54,22 +41,11 @@ const DEFAULT_SETTINGS: ReaderSettings = {
 export default function Page() {
   const [url, setUrl] = useState('');
   const [extracting, setExtracting] = useState(false);
-  const [progressStep, setProgressStep] = useState(0);
   const [images, setImages] = useState<ImageMode>('on');
   const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_SETTINGS);
   const [result, setResult] = useState<ExtractSuccessResponse | null>(null);
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
-  const [publicMetrics, setPublicMetrics] = useState<PublicMetrics>({
-    totalUsers: 0,
-    usersToday: 0,
-    usersLast7Days: 0,
-    totalTrackedSessions: 0,
-    excludedBotSessions: 0,
-    excludedLowQualitySessions: 0,
-    updatedAt: '',
-  });
-  const [metricsLoading, setMetricsLoading] = useState(true);
 
   const sessionIdRef = useRef<string>('');
 
@@ -86,37 +62,6 @@ export default function Page() {
         href: window.location.href,
       },
     });
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-
-    async function loadPublicMetrics(): Promise<void> {
-      try {
-        const response = await fetch('/api/public-metrics');
-        const json = (await response.json()) as {
-          success: boolean;
-          metrics?: PublicMetrics;
-        };
-
-        if (!active || !response.ok || !json.success || !json.metrics) return;
-        setPublicMetrics(json.metrics);
-      } catch {
-        // Public metrics should never block UX.
-      } finally {
-        if (active) setMetricsLoading(false);
-      }
-    }
-
-    void loadPublicMetrics();
-    const interval = setInterval(() => {
-      void loadPublicMetrics();
-    }, 90_000);
-
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
   }, []);
 
   const transformedContent = useMemo(() => {
@@ -159,11 +104,6 @@ export default function Page() {
 
     setExtracting(true);
     setFailure(null);
-    setProgressStep(0);
-
-    const timer = setInterval(() => {
-      setProgressStep((current) => Math.min(current + 1, 2));
-    }, 1300);
 
     try {
       const response = await fetch('/api/extract', {
@@ -207,7 +147,6 @@ export default function Page() {
         },
       });
 
-      setProgressStep(3);
       setResult(json);
     } catch (error) {
       void trackClientEvent({
@@ -223,7 +162,6 @@ export default function Page() {
       setFailure({ errorCode: 'EXTRACTION_FAILED', url: targetUrl });
       setResult(null);
     } finally {
-      clearInterval(timer);
       setExtracting(false);
     }
   }
@@ -348,7 +286,6 @@ export default function Page() {
     setUrl('');
     setImages('on');
     setSettings((current) => ({ ...DEFAULT_SETTINGS, colorTheme: current.colorTheme }));
-    setProgressStep(0);
 
     void trackClientEvent({
       eventName: 'new_url_clicked',
@@ -367,28 +304,7 @@ export default function Page() {
             onUrlChange={setUrl}
             onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
             loading={extracting}
-            trustWidget={
-              <UsageTrustInline
-                totalUsers={publicMetrics.totalUsers}
-                usersToday={publicMetrics.usersToday}
-                updatedAt={publicMetrics.updatedAt}
-                loading={metricsLoading}
-              />
-            }
-            secondaryAction={
-              <Link
-                href="/batch"
-                className="text-sm font-semibold text-[var(--color-accent)] underline-offset-4 hover:underline"
-              >
-                Need bulk processing? Open Batch Workspace
-              </Link>
-            }
           />
-          {extracting && (
-            <div className="pointer-events-none absolute inset-x-0 top-[60%] mx-auto w-full max-w-xl px-6">
-              <ProgressIndicator activeStep={progressStep} />
-            </div>
-          )}
         </div>
       ) : (
         <div
