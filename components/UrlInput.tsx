@@ -9,9 +9,10 @@ type UrlInputProps = {
   onSubmit: (urlValue?: string) => void;
   loading: boolean;
   subtitle: string;
+  trustNote?: string;
 };
 
-export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle }: UrlInputProps) {
+export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, trustNote }: UrlInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   function submitCurrentUrl(): void {
@@ -24,6 +25,7 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle }: UrlI
       <div className="w-full max-w-3xl text-center">
         <h1 className="logo-mark text-6xl font-semibold text-[var(--color-ink)]">Clearpage</h1>
         <p className="mt-2 text-lg text-[var(--color-muted)]">{subtitle}</p>
+        {trustNote ? <p className="mt-1 text-sm text-[var(--color-muted)]">{trustNote}</p> : null}
 
         <div className="mt-12 flex flex-col gap-4 md:flex-row md:items-center">
           <label htmlFor="url-input" className="sr-only">
@@ -61,12 +63,6 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle }: UrlI
         <p className="mt-5 text-sm text-[var(--color-muted)]">
           <Link href="/batch" className="text-[var(--color-accent)] hover:underline">
             Need bulk processing? Open Batch Workspace
-          </Link>
-          <span aria-hidden="true" className="px-2">
-            |
-          </span>
-          <Link href="/trust" className="text-[var(--color-accent)] hover:underline">
-            View trust and usage details
           </Link>
         </p>
       </div>

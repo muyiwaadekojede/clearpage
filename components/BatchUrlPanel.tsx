@@ -31,7 +31,6 @@ type BatchUrlPanelProps = {
   successCount: number;
   failureCount: number;
   etaText: string;
-  estimateText: string;
   downloadEstimateText: string;
   runMessage: string;
   results: BatchItemResult[];
@@ -73,7 +72,6 @@ export function BatchUrlPanel({
   successCount,
   failureCount,
   etaText,
-  estimateText,
   downloadEstimateText,
   runMessage,
   results,
@@ -91,25 +89,23 @@ export function BatchUrlPanel({
   }
 
   const visibleSuccessCount = results.filter((row) => row.status === 'success').length;
+  const showProgress = totalCount > 0 || processedCount > 0 || results.length > 0;
 
   return (
     <section className="mt-7 rounded-2xl border border-[var(--color-border)] bg-white p-4 text-left">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold text-[var(--color-ink)]">Batch URL Workspace</h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            Paste or import a block of links. Limit: {maxUrls.toLocaleString()} URLs per batch.
-          </p>
-        </div>
+        <p className="text-sm text-[var(--color-muted)]">Limit: {maxUrls.toLocaleString()} URLs per batch.</p>
 
-        <div className="grid size-20 place-items-center rounded-full border-2 border-[var(--color-border)] bg-white text-center">
-          <span className="text-sm font-semibold text-[var(--color-ink)]">{fill}%</span>
-        </div>
+        {showProgress ? (
+          <div className="grid size-16 place-items-center rounded-full border-2 border-[var(--color-border)] bg-white text-center">
+            <span className="text-sm font-semibold text-[var(--color-ink)]">{fill}%</span>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-4 grid gap-3">
         <label htmlFor="batch-urls" className="text-xs font-semibold text-[var(--color-muted)]">
-          URLs Block
+          URLs
         </label>
         <textarea
           id="batch-urls"
@@ -121,15 +117,15 @@ export function BatchUrlPanel({
         />
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-muted)]">
-          {jobId ? <span>Job: {jobId.slice(0, 8)}</span> : null}
-          {jobId ? <span aria-hidden="true">|</span> : null}
           <span>
-            Parsed URLs: {parsedCount.toLocaleString()} / {maxUrls.toLocaleString()}
+            {parsedCount.toLocaleString()} / {maxUrls.toLocaleString()} URLs
           </span>
-          <span aria-hidden="true">|</span>
-          <span>Batch estimate: {estimateText}</span>
-          <span aria-hidden="true">|</span>
-          <span>Download estimate: {downloadEstimateText}</span>
+          {jobId ? <span aria-hidden="true">|</span> : null}
+          {jobId ? <span>Job {jobId.slice(0, 8)}</span> : null}
+          {processing ? <span aria-hidden="true">|</span> : null}
+          {processing ? <span>ETA {etaText}</span> : null}
+          {!processing && successCount > 0 ? <span aria-hidden="true">|</span> : null}
+          {!processing && successCount > 0 ? <span>Download est. {downloadEstimateText}</span> : null}
         </div>
 
         {tooManyUrls ? (
@@ -140,7 +136,7 @@ export function BatchUrlPanel({
 
         <div className="flex flex-wrap items-center gap-3">
           <label htmlFor="batch-format" className="text-sm font-medium text-[var(--color-ink)]">
-            Export format
+            Format
           </label>
           <select
             id="batch-format"
@@ -173,7 +169,7 @@ export function BatchUrlPanel({
             onClick={() => fileInputRef.current?.click()}
             className="h-10 rounded-lg border border-[var(--color-border)] bg-white px-4 text-sm font-semibold text-[var(--color-ink)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
-            Import File
+            Import
           </button>
 
           <button
@@ -191,15 +187,17 @@ export function BatchUrlPanel({
             disabled={processing || downloadingAll || successCount === 0}
             className="h-10 rounded-lg border border-[var(--color-border)] bg-white px-4 text-sm font-semibold text-[var(--color-ink)] hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {downloadingAll ? 'Downloading...' : `Download ${successCount.toLocaleString()} Files`}
+            {downloadingAll ? 'Downloading...' : `Download ${successCount.toLocaleString()}`}
           </button>
         </div>
 
-        <p className="text-xs text-[var(--color-muted)]">
-          {processing
-            ? `Processed ${processedCount.toLocaleString()} of ${totalCount.toLocaleString()} | ETA ${etaText}`
-            : runMessage || 'Batch not started yet.'}
-        </p>
+        {processing || runMessage ? (
+          <p className="text-xs text-[var(--color-muted)]">
+            {processing
+              ? `Processed ${processedCount.toLocaleString()} of ${totalCount.toLocaleString()}`
+              : runMessage}
+          </p>
+        ) : null}
       </div>
 
       {results.length > 0 ? (

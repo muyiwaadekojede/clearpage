@@ -30,6 +30,7 @@ type PublicMetricsPayload = {
   success: boolean;
   metrics?: {
     totalUsers: number;
+    usersToday: number;
   };
 };
 
@@ -53,7 +54,7 @@ export default function Page() {
   const [result, setResult] = useState<ExtractSuccessResponse | null>(null);
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
-  const [trustedUsers, setTrustedUsers] = useState<number | null>(null);
+  const [trustMetrics, setTrustMetrics] = useState<{ totalUsers: number; usersToday: number } | null>(null);
 
   const sessionIdRef = useRef<string>('');
 
@@ -84,7 +85,11 @@ export default function Page() {
         if (!active || !json.success || !json.metrics) return;
 
         const nextTotal = Number(json.metrics.totalUsers || 0);
-        setTrustedUsers(Number.isFinite(nextTotal) ? nextTotal : 0);
+        const nextToday = Number(json.metrics.usersToday || 0);
+        setTrustMetrics({
+          totalUsers: Number.isFinite(nextTotal) ? nextTotal : 0,
+          usersToday: Number.isFinite(nextToday) ? nextToday : 0,
+        });
       } catch {
         // Trust count is supplemental content and should not block UX.
       }
@@ -342,10 +347,11 @@ export default function Page() {
             onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
             loading={extracting}
             subtitle={
-              trustedUsers && trustedUsers > 0
-                ? `Trusted by ${trustedUsers.toLocaleString()} readers. Paste any URL. Get a clean, exportable document.`
+              trustMetrics && trustMetrics.totalUsers > 0
+                ? `Trusted by ${trustMetrics.totalUsers.toLocaleString()} readers (+${trustMetrics.usersToday.toLocaleString()} today). Paste any URL. Get a clean, exportable document.`
                 : 'Paste any URL. Get a clean, exportable document.'
             }
+            trustNote={trustMetrics ? 'Counts exclude bot and low-quality sessions.' : ''}
           />
         </div>
       ) : (

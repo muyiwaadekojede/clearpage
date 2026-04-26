@@ -125,11 +125,6 @@ export default function BatchPage() {
 
   const parsedBatchUrls = useMemo(() => parseBatchUrls(batchUrlsInput), [batchUrlsInput]);
 
-  const batchEstimatedTotalMs = useMemo(
-    () => parsedBatchUrls.length * BATCH_ESTIMATED_MS_PER_URL,
-    [parsedBatchUrls.length],
-  );
-
   const batchDownloadEstimateMs = useMemo(() => {
     const count = batchSuccessCount > 0 ? batchSuccessCount : parsedBatchUrls.length;
     return count * DOWNLOAD_ESTIMATED_MS_PER_URL[batchFormat];
@@ -434,12 +429,7 @@ export default function BatchPage() {
     <main className="cp-shell cp-enter mx-auto w-full max-w-5xl px-6 py-12">
       <div className="mx-auto max-w-4xl">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="logo-mark text-5xl font-semibold text-[var(--color-ink)]">Batch Workspace</h1>
-            <p className="mt-2 text-sm text-[var(--color-muted)]">
-              Dedicated large-run processing page.
-            </p>
-          </div>
+          <h1 className="logo-mark text-5xl font-semibold text-[var(--color-ink)]">Batch Workspace</h1>
 
           <Link
             href="/"
@@ -449,7 +439,7 @@ export default function BatchPage() {
           </Link>
         </div>
 
-        <div className="mt-10">
+        <div className="mt-6">
           <BatchUrlPanel
             urlsInput={batchUrlsInput}
             onUrlsInputChange={setBatchUrlsInput}
@@ -466,7 +456,6 @@ export default function BatchPage() {
             successCount={batchSuccessCount}
             failureCount={batchFailureCount}
             etaText={formatDuration(batchEtaMs)}
-            estimateText={formatDuration(batchEstimatedTotalMs)}
             downloadEstimateText={formatDuration(batchDownloadEstimateMs)}
             runMessage={batchRunMessage}
             results={batchResults}
