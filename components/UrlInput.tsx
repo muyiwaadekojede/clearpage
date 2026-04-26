@@ -23,11 +23,20 @@ function fmt(value: number): string {
   return Math.max(0, Number(value || 0)).toLocaleString();
 }
 
+function wordForCount(value: number, singular: string, plural: string): string {
+  return Number(value) === 1 ? singular : plural;
+}
+
 export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageMetrics }: UrlInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const hasUsageData =
     !!usageMetrics &&
     (usageMetrics.totalUsers > 0 || usageMetrics.pagesParsedTotal > 0 || usageMetrics.docsExportedTotal > 0);
+  const hasAnyGrowth =
+    !!usageMetrics &&
+    (usageMetrics.usersLast7Days > 0 ||
+      usageMetrics.pagesParsedLast7Days > 0 ||
+      usageMetrics.docsExportedLast7Days > 0);
 
   function submitCurrentUrl(): void {
     const currentValue = inputRef.current?.value ?? url;
@@ -76,20 +85,29 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageM
         {hasUsageData && usageMetrics ? (
           <p className="mt-2 text-sm text-[var(--color-muted)]">
             <span>
-              <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.totalUsers)}</span> users{' '}
-              <span className="text-[var(--color-accent)]">+{fmt(usageMetrics.usersLast7Days)}</span>
+              <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.totalUsers)}</span>{' '}
+              {wordForCount(usageMetrics.totalUsers, 'user', 'users')}
+              {usageMetrics.usersLast7Days > 0 ? (
+                <span className="text-[var(--color-accent)]"> (+{fmt(usageMetrics.usersLast7Days)})</span>
+              ) : null}
             </span>
             <span aria-hidden="true"> · </span>
             <span>
               <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.pagesParsedTotal)}</span>{' '}
-              parsed <span className="text-[var(--color-accent)]">+{fmt(usageMetrics.pagesParsedLast7Days)}</span>
+              {wordForCount(usageMetrics.pagesParsedTotal, 'page', 'pages')} parsed
+              {usageMetrics.pagesParsedLast7Days > 0 ? (
+                <span className="text-[var(--color-accent)]"> (+{fmt(usageMetrics.pagesParsedLast7Days)})</span>
+              ) : null}
             </span>
             <span aria-hidden="true"> · </span>
             <span>
               <span className="font-semibold text-[var(--color-ink)]">{fmt(usageMetrics.docsExportedTotal)}</span>{' '}
-              exports <span className="text-[var(--color-accent)]">+{fmt(usageMetrics.docsExportedLast7Days)}</span>
+              {wordForCount(usageMetrics.docsExportedTotal, 'export', 'exports')}
+              {usageMetrics.docsExportedLast7Days > 0 ? (
+                <span className="text-[var(--color-accent)]"> (+{fmt(usageMetrics.docsExportedLast7Days)})</span>
+              ) : null}
             </span>
-            <span className="ml-2 text-xs">7d</span>
+            {hasAnyGrowth ? <span className="ml-2 text-xs">7d</span> : null}
           </p>
         ) : null}
 
