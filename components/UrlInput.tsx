@@ -9,10 +9,21 @@ type UrlInputProps = {
   onSubmit: (urlValue?: string) => void;
   loading: boolean;
   subtitle: string;
-  trustNote?: string;
+  usageMetrics?: {
+    totalUsers: number;
+    usersLast7Days: number;
+    pagesParsedTotal: number;
+    pagesParsedLast7Days: number;
+    docsExportedTotal: number;
+    docsExportedLast7Days: number;
+  } | null;
 };
 
-export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, trustNote }: UrlInputProps) {
+function fmt(value: number): string {
+  return Math.max(0, Number(value || 0)).toLocaleString();
+}
+
+export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageMetrics }: UrlInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   function submitCurrentUrl(): void {
@@ -25,7 +36,19 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, trustN
       <div className="w-full max-w-3xl text-center">
         <h1 className="logo-mark text-6xl font-semibold text-[var(--color-ink)]">Clearpage</h1>
         <p className="mt-2 text-lg text-[var(--color-muted)]">{subtitle}</p>
-        {trustNote ? <p className="mt-1 text-sm text-[var(--color-muted)]">{trustNote}</p> : null}
+        {usageMetrics ? (
+          <div className="mt-2 text-sm text-[var(--color-muted)]">
+            <p>Growth window: last 7 days</p>
+            <p className="mt-1">
+              <span>{fmt(usageMetrics.totalUsers)} users </span>
+              <span className="text-[var(--color-accent)]">(+{fmt(usageMetrics.usersLast7Days)})</span>
+              <span> · {fmt(usageMetrics.pagesParsedTotal)} pages parsed </span>
+              <span className="text-[var(--color-accent)]">(+{fmt(usageMetrics.pagesParsedLast7Days)})</span>
+              <span> · {fmt(usageMetrics.docsExportedTotal)} docs exported </span>
+              <span className="text-[var(--color-accent)]">(+{fmt(usageMetrics.docsExportedLast7Days)})</span>
+            </p>
+          </div>
+        ) : null}
 
         <div className="mt-12 flex flex-col gap-4 md:flex-row md:items-center">
           <label htmlFor="url-input" className="sr-only">

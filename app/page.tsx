@@ -30,7 +30,11 @@ type PublicMetricsPayload = {
   success: boolean;
   metrics?: {
     totalUsers: number;
-    usersToday: number;
+    usersLast7Days: number;
+    pagesParsedTotal: number;
+    pagesParsedLast7Days: number;
+    docsExportedTotal: number;
+    docsExportedLast7Days: number;
   };
 };
 
@@ -54,7 +58,14 @@ export default function Page() {
   const [result, setResult] = useState<ExtractSuccessResponse | null>(null);
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
-  const [trustMetrics, setTrustMetrics] = useState<{ totalUsers: number; usersToday: number } | null>(null);
+  const [usageMetrics, setUsageMetrics] = useState<{
+    totalUsers: number;
+    usersLast7Days: number;
+    pagesParsedTotal: number;
+    pagesParsedLast7Days: number;
+    docsExportedTotal: number;
+    docsExportedLast7Days: number;
+  } | null>(null);
 
   const sessionIdRef = useRef<string>('');
 
@@ -84,11 +95,20 @@ export default function Page() {
         const json = (await response.json()) as PublicMetricsPayload;
         if (!active || !json.success || !json.metrics) return;
 
-        const nextTotal = Number(json.metrics.totalUsers || 0);
-        const nextToday = Number(json.metrics.usersToday || 0);
-        setTrustMetrics({
-          totalUsers: Number.isFinite(nextTotal) ? nextTotal : 0,
-          usersToday: Number.isFinite(nextToday) ? nextToday : 0,
+        const nextTotalUsers = Number(json.metrics.totalUsers || 0);
+        const nextUsersLast7Days = Number(json.metrics.usersLast7Days || 0);
+        const nextPagesParsedTotal = Number(json.metrics.pagesParsedTotal || 0);
+        const nextPagesParsedLast7Days = Number(json.metrics.pagesParsedLast7Days || 0);
+        const nextDocsExportedTotal = Number(json.metrics.docsExportedTotal || 0);
+        const nextDocsExportedLast7Days = Number(json.metrics.docsExportedLast7Days || 0);
+
+        setUsageMetrics({
+          totalUsers: Number.isFinite(nextTotalUsers) ? nextTotalUsers : 0,
+          usersLast7Days: Number.isFinite(nextUsersLast7Days) ? nextUsersLast7Days : 0,
+          pagesParsedTotal: Number.isFinite(nextPagesParsedTotal) ? nextPagesParsedTotal : 0,
+          pagesParsedLast7Days: Number.isFinite(nextPagesParsedLast7Days) ? nextPagesParsedLast7Days : 0,
+          docsExportedTotal: Number.isFinite(nextDocsExportedTotal) ? nextDocsExportedTotal : 0,
+          docsExportedLast7Days: Number.isFinite(nextDocsExportedLast7Days) ? nextDocsExportedLast7Days : 0,
         });
       } catch {
         // Trust count is supplemental content and should not block UX.
@@ -346,12 +366,8 @@ export default function Page() {
             onUrlChange={setUrl}
             onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
             loading={extracting}
-            subtitle={
-              trustMetrics && trustMetrics.totalUsers > 0
-                ? `Trusted by ${trustMetrics.totalUsers.toLocaleString()} readers (+${trustMetrics.usersToday.toLocaleString()} today). Paste any URL. Get a clean, exportable document.`
-                : 'Paste any URL. Get a clean, exportable document.'
-            }
-            trustNote={trustMetrics ? 'Counts exclude bot and low-quality sessions.' : ''}
+            subtitle="Paste any URL. Get a clean, exportable document."
+            usageMetrics={usageMetrics}
           />
         </div>
       ) : (

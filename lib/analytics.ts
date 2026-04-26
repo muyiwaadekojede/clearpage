@@ -46,6 +46,10 @@ export type PublicUsageMetrics = {
   totalUsers: number;
   usersToday: number;
   usersLast7Days: number;
+  pagesParsedTotal: number;
+  pagesParsedLast7Days: number;
+  docsExportedTotal: number;
+  docsExportedLast7Days: number;
   totalTrackedSessions: number;
   excludedBotSessions: number;
   excludedLowQualitySessions: number;
@@ -527,10 +531,38 @@ export function getPublicUsageMetrics(now = new Date()): PublicUsageMetrics {
     }
   }
 
+  const pagesParsedTotals = db
+    .prepare(
+      `
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN event_time >= ? THEN 1 ELSE 0 END) AS last7Days
+      FROM analytics_events
+      WHERE event_name = 'api_extract_result' AND status = 'success'
+      `,
+    )
+    .get(utcStart7Days.toISOString()) as { total: number; last7Days: number | null };
+
+  const docsExportedTotals = db
+    .prepare(
+      `
+      SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN event_time >= ? THEN 1 ELSE 0 END) AS last7Days
+      FROM analytics_events
+      WHERE event_name = 'api_export_result' AND status = 'success'
+      `,
+    )
+    .get(utcStart7Days.toISOString()) as { total: number; last7Days: number | null };
+
   return {
     totalUsers,
     usersToday,
     usersLast7Days,
+    pagesParsedTotal: Number(pagesParsedTotals?.total || 0),
+    pagesParsedLast7Days: Number(pagesParsedTotals?.last7Days || 0),
+    docsExportedTotal: Number(docsExportedTotals?.total || 0),
+    docsExportedLast7Days: Number(docsExportedTotals?.last7Days || 0),
     totalTrackedSessions: sessions.length,
     excludedBotSessions,
     excludedLowQualitySessions,
