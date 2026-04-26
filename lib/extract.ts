@@ -52,6 +52,28 @@ const IMAGE_EXTENSION_MIME: Record<string, string> = {
 const MAX_EMBEDDED_IMAGES_PER_PAGE = 24;
 const MAX_EMBED_BYTES_PER_IMAGE = 2_000_000;
 const MAX_EMBED_BYTES_PER_PAGE = 10_000_000;
+const DIRECT_FILE_CONTENT_TYPE_MARKERS = [
+  'application/pdf',
+  'application/x-pdf',
+  'application/msword',
+  'application/vnd.ms-word',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/csv',
+];
+const DIRECT_FILE_EXTENSIONS = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.csv',
+];
 
 const INSECURE_TLS_DISPATCHER = new UndiciAgent({
   connect: { rejectUnauthorized: false },
@@ -135,6 +157,34 @@ function escapeHtml(input: string): string {
 function hasPaywallSignals(html: string): boolean {
   const haystack = html.toLowerCase();
   return PAYWALL_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+function isLikelyDirectFileUrl(url: URL): boolean {
+  const pathname = url.pathname.toLowerCase();
+  if (pathname.includes('/pdf/')) return true;
+  return DIRECT_FILE_EXTENSIONS.some((ext) => pathname.endsWith(ext));
+}
+
+function isDirectFileContentType(contentType: string): boolean {
+  const normalized = contentType.toLowerCase();
+  return DIRECT_FILE_CONTENT_TYPE_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function isAttachmentDisposition(disposition: string): boolean {
+  return /\battachment\b/i.test(disposition);
+}
+
+function isLikelyDirectFileResponse(response: Response): boolean {
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  const contentDisposition = (response.headers.get('content-disposition') || '').toLowerCase();
+  if (isDirectFileContentType(contentType)) return true;
+  if (isAttachmentDisposition(contentDisposition)) return true;
+
+  try {
+    return isLikelyDirectFileUrl(new URL(response.url));
+  } catch {
+    return false;
+  }
 }
 
 async function fetchWithTimeout(
@@ -267,6 +317,13 @@ async function fetchHtmlWithTimeout(url: string, timeoutMs: number): Promise<str
         throw new ExtractPipelineError(
           'FETCH_FAILED',
           `Failed to reach URL (HTTP ${response.status}).`,
+        );
+      }
+
+      if (isLikelyDirectFileResponse(response)) {
+        throw new ExtractPipelineError(
+          'DIRECT_FILE_URL',
+          'This URL points directly to a downloadable file. Download it directly instead of extracting page content.',
         );
       }
 
@@ -723,6 +780,21 @@ function hasBotChallengeSignals(html: string): boolean {
   return weakCount >= 2 && !hasReadableScaffold;
 }
 
+function shouldEscalateToBrowserFromFetchError(error: unknown): boolean {
+  const maybeError = error as { code?: ExtractErrorCode; message?: string };
+  if (maybeError.code !== 'FETCH_FAILED') return false;
+
+  const message = (maybeError.message || '').toLowerCase();
+  return (
+    message.includes('http 401') ||
+    message.includes('http 403') ||
+    message.includes('http 429') ||
+    message.includes('http 503') ||
+    message.includes('http 520') ||
+    message.includes('http 522')
+  );
+}
+
 function getBodyTextLengthFromHtml(html: string): number {
   const dom = new JSDOM(html);
   try {
@@ -1001,6 +1073,15 @@ export async function extractFromUrl(
     };
   }
 
+  if (isLikelyDirectFileUrl(parsedUrl)) {
+    return {
+      success: false,
+      errorCode: 'DIRECT_FILE_URL',
+      errorMessage:
+        'This URL points directly to a downloadable file. Download it directly instead of extracting page content.',
+    };
+  }
+
   const normalizedUrl = parsedUrl.toString();
   if (visited.has(normalizedUrl)) {
     return {
@@ -1038,8 +1119,19 @@ export async function extractFromUrl(
   }
 
   try {
-    let html = await fetchHtmlWithTimeout(parsedUrl.toString(), 20_000);
+    let html = '';
     let usedBrowserFallback = false;
+
+    try {
+      html = await fetchHtmlWithTimeout(parsedUrl.toString(), 20_000);
+    } catch (fetchError) {
+      if (!shouldEscalateToBrowserFromFetchError(fetchError)) {
+        throw fetchError;
+      }
+
+      html = await fetchRenderedHtml(parsedUrl.toString());
+      usedBrowserFallback = true;
+    }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (hasBotChallengeSignals(html)) {

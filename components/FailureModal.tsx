@@ -24,6 +24,8 @@ const ERROR_MESSAGES: Record<ExtractErrorCode, string> = {
   EMPTY_CONTENT: 'The page loaded but contained no readable text content.',
   TIMEOUT:
     'The page took too long to load. This can happen with very slow servers or heavily JavaScript-dependent pages.',
+  DIRECT_FILE_URL:
+    'This link points to a direct file (such as PDF or DOC). Use direct download instead of article extraction.',
 };
 
 type FailureModalProps = {

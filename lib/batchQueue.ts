@@ -46,7 +46,7 @@ export type BatchItemRow = {
 
 export const MAX_BATCH_JOB_URLS = 50_000;
 const DEFAULT_MS_PER_URL = 9_000;
-const BATCH_WORKER_CONCURRENCY = 2;
+const BATCH_WORKER_CONCURRENCY = 3;
 const BATCH_ITEM_MAX_ATTEMPTS = 3;
 const BATCH_RETRY_BASE_DELAY_MS = 1_500;
 const BATCH_RETRY_MAX_DELAY_MS = 12_000;
@@ -88,6 +88,17 @@ function getHostnameFromUrl(rawUrl: string): string {
     return new URL(rawUrl).hostname.toLowerCase();
   } catch {
     return 'unknown-host';
+  }
+}
+
+function getTitleFromUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const lastSegment = parsed.pathname.split('/').filter(Boolean).pop() || parsed.hostname;
+    const decoded = decodeURIComponent(lastSegment);
+    return decoded || parsed.hostname;
+  } catch {
+    return 'Direct File';
   }
 }
 
@@ -139,7 +150,7 @@ function normalizeExportFormat(value: unknown): ExportFormat {
 
 function normalizeImageMode(value: unknown): ImageMode {
   if (value === 'off' || value === 'captions' || value === 'on') return value;
-  return 'on';
+  return 'off';
 }
 
 function normalizeSettings(input: unknown): Partial<ReaderSettings> {
@@ -598,6 +609,20 @@ async function runJob(jobId: string): Promise<void> {
         if (!result.success) {
           lastErrorCode = result.errorCode || 'EXTRACTION_FAILED';
           lastErrorMessage = result.errorMessage || 'Extraction failed for this URL.';
+
+          if (lastErrorCode === 'DIRECT_FILE_URL') {
+            markDomainSuccess(hostname);
+            markItemSuccess({
+              jobId,
+              itemId: item.id,
+              durationMs: Date.now() - startedAt,
+              extractionId: null,
+              sourceUrl: item.url,
+              title: getTitleFromUrl(item.url),
+            });
+            completed = true;
+            break;
+          }
 
           if (shouldRetryFailure(lastErrorCode) && attempt < BATCH_ITEM_MAX_ATTEMPTS) {
             const domainCooldownMs = markDomainTransientFailure(hostname);

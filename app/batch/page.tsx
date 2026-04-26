@@ -110,7 +110,7 @@ export default function BatchPage() {
   const [batchRunMessage, setBatchRunMessage] = useState('');
 
   const sessionIdRef = useRef('');
-  const imagesRef = useRef<ImageMode>('on');
+  const imagesRef = useRef<ImageMode>('off');
 
   useEffect(() => {
     sessionIdRef.current = getClientSessionId();
@@ -249,6 +249,16 @@ export default function BatchPage() {
 
   async function downloadBatchItem(row: BatchItemResult): Promise<void> {
     if (row.status !== 'success') return;
+    if (!row.extractionId && row.sourceUrl) {
+      const link = document.createElement('a');
+      link.href = row.sourceUrl;
+      link.rel = 'noopener noreferrer';
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      return;
+    }
 
     const response = await fetch('/api/export', {
       method: 'POST',

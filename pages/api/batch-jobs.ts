@@ -97,7 +97,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
           jobId: created.jobId,
           count: created.totalUrls,
           format: body?.format || 'pdf',
-          images: body?.images || 'on',
+          images: body?.images || 'off',
         },
       });
 

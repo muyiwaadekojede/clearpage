@@ -9,6 +9,7 @@ type UrlInputProps = {
   onSubmit: (urlValue?: string) => void;
   loading: boolean;
   subtitle: string;
+  statusMessage?: string;
   usageMetrics?: {
     totalUsers: number;
     usersLast7Days: number;
@@ -27,7 +28,7 @@ function wordForCount(value: number, singular: string, plural: string): string {
   return Number(value) === 1 ? singular : plural;
 }
 
-export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageMetrics }: UrlInputProps) {
+export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, statusMessage, usageMetrics }: UrlInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const hasUsageData =
     !!usageMetrics &&
@@ -79,7 +80,7 @@ export function UrlInput({ url, onUrlChange, onSubmit, loading, subtitle, usageM
         </div>
 
         <p className="mt-3 min-h-5 text-sm text-[var(--color-muted)]">
-          {loading ? 'Fetching page and extracting content...' : ''}
+          {loading ? 'Fetching page and extracting content...' : statusMessage || ''}
         </p>
 
         {hasUsageData && usageMetrics ? (

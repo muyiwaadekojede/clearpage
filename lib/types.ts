@@ -6,7 +6,8 @@ export type ExtractErrorCode =
   | 'EXTRACTION_FAILED'
   | 'PAYWALL_DETECTED'
   | 'EMPTY_CONTENT'
-  | 'TIMEOUT';
+  | 'TIMEOUT'
+  | 'DIRECT_FILE_URL';
 
 export interface ReaderSettings {
   fontFace: 'serif' | 'sans-serif' | 'monospace' | 'dyslexic';

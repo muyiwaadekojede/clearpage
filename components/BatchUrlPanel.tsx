@@ -235,7 +235,7 @@ export function BatchUrlPanel({
 
                 <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[var(--color-muted)]">
                   <span>{formatMs(row.durationMs)}</span>
-                  {row.status === 'success' && row.extractionId ? (
+                  {row.status === 'success' && (row.extractionId || row.sourceUrl) ? (
                     <button
                       type="button"
                       onClick={() => onDownloadOne(row)}

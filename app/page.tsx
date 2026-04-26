@@ -58,6 +58,7 @@ export default function Page() {
   const [result, setResult] = useState<ExtractSuccessResponse | null>(null);
   const [failure, setFailure] = useState<FailureState | null>(null);
   const [exporting, setExporting] = useState<Partial<Record<ExportFormat, boolean>>>({});
+  const [inputStatusMessage, setInputStatusMessage] = useState('');
   const [usageMetrics, setUsageMetrics] = useState<{
     totalUsers: number;
     usersLast7Days: number;
@@ -166,6 +167,7 @@ export default function Page() {
 
     setExtracting(true);
     setFailure(null);
+    setInputStatusMessage('');
 
     try {
       const response = await fetch('/api/extract', {
@@ -178,6 +180,28 @@ export default function Page() {
 
       if (!response.ok || !json.success) {
         const errorCode = ((json as ExtractFailurePayload).errorCode || 'EXTRACTION_FAILED') as ExtractErrorCode;
+        if (errorCode === 'DIRECT_FILE_URL') {
+          const directLink = document.createElement('a');
+          directLink.href = targetUrl;
+          directLink.rel = 'noopener noreferrer';
+          directLink.target = '_blank';
+          document.body.appendChild(directLink);
+          directLink.click();
+          directLink.remove();
+
+          void trackClientEvent({
+            eventName: 'direct_file_download_triggered',
+            eventGroup: 'extract',
+            status: 'success',
+            pagePath: '/',
+            attemptedUrl: targetUrl,
+          });
+
+          setFailure(null);
+          setResult(null);
+          setInputStatusMessage('Direct file detected. Opened in a new tab for download.');
+          return;
+        }
 
         void trackClientEvent({
           eventName: 'extract_result',
@@ -210,6 +234,7 @@ export default function Page() {
       });
 
       setResult(json);
+      setInputStatusMessage('');
     } catch (error) {
       void trackClientEvent({
         eventName: 'extract_result',
@@ -345,6 +370,7 @@ export default function Page() {
   function resetState(): void {
     setResult(null);
     setFailure(null);
+    setInputStatusMessage('');
     setUrl('');
     setImages('on');
     setSettings((current) => ({ ...DEFAULT_SETTINGS, colorTheme: current.colorTheme }));
@@ -367,6 +393,7 @@ export default function Page() {
             onSubmit={(submittedUrl) => void handleExtract(submittedUrl)}
             loading={extracting}
             subtitle="Paste any URL. Get a clean, exportable document."
+            statusMessage={inputStatusMessage}
             usageMetrics={usageMetrics}
           />
         </div>
