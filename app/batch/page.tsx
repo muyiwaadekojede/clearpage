@@ -142,12 +142,22 @@ export default function BatchPage() {
   async function readErrorMessage(response: Response): Promise<string> {
     const raw = await response.text();
     if (!raw) return 'Download failed.';
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+    if (contentType.includes('text/html') || /^\s*<!doctype html/i.test(raw) || /^\s*<html/i.test(raw)) {
+      if (response.status >= 500) {
+        return 'Server error while preparing this file. Retry download.';
+      }
+      return `Download failed (${response.status}). Retry.`;
+    }
 
     try {
       const parsed = JSON.parse(raw) as { error?: string; details?: string };
       return parsed.error || parsed.details || raw;
     } catch {
-      return raw;
+      const cleaned = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!cleaned) return `Download failed (${response.status}).`;
+      return cleaned.slice(0, 220);
     }
   }
 

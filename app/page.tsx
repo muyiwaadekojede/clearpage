@@ -165,12 +165,22 @@ export default function Page() {
   async function readErrorMessage(response: Response): Promise<string> {
     const raw = await response.text();
     if (!raw) return 'Direct file download failed.';
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+    if (contentType.includes('text/html') || /^\s*<!doctype html/i.test(raw) || /^\s*<html/i.test(raw)) {
+      if (response.status >= 500) {
+        return 'Server error while preparing this download. Retry, or switch to PDF.';
+      }
+      return `Download failed (${response.status}). Retry, or switch format.`;
+    }
 
     try {
       const parsed = JSON.parse(raw) as { error?: string; details?: string };
       return parsed.error || parsed.details || raw;
     } catch {
-      return raw;
+      const cleaned = raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!cleaned) return `Download failed (${response.status}).`;
+      return cleaned.slice(0, 220);
     }
   }
 
