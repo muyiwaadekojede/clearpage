@@ -139,6 +139,18 @@ export default function BatchPage() {
     };
   }
 
+  async function readErrorMessage(response: Response): Promise<string> {
+    const raw = await response.text();
+    if (!raw) return 'Download failed.';
+
+    try {
+      const parsed = JSON.parse(raw) as { error?: string; details?: string };
+      return parsed.error || parsed.details || raw;
+    } catch {
+      return raw;
+    }
+  }
+
   async function loadBatchJob(jobId: string): Promise<void> {
     const response = await fetch(
       `/api/batch-jobs?jobId=${encodeURIComponent(jobId)}&limit=400&offset=0`,
@@ -247,7 +259,11 @@ export default function BatchPage() {
     };
   }, [batchJobId, batchJobStatus]);
 
-  async function downloadBatchItem(row: BatchItemResult): Promise<void> {
+  async function downloadBatchItem(
+    row: BatchItemResult,
+    allowFallback = true,
+    requestedFormat: ExportFormat = batchFormat,
+  ): Promise<void> {
     if (row.status !== 'success') return;
     if (!row.extractionId && row.sourceUrl) {
       const response = await fetch('/api/direct-file', {
@@ -255,20 +271,29 @@ export default function BatchPage() {
         headers: buildHeaders(),
         body: JSON.stringify({
           url: row.sourceUrl,
-          format: batchFormat,
+          format: requestedFormat,
         }),
       });
 
       if (!response.ok) {
-        const raw = await response.text();
-        throw new Error(raw || `Direct file download failed (${batchFormat}).`);
+        const message = await readErrorMessage(response);
+        if (allowFallback && requestedFormat !== 'pdf') {
+          const previousFormat = requestedFormat;
+          setBatchFormat('pdf');
+          setBatchRunMessage(
+            `Format ${previousFormat.toUpperCase()} unavailable for one direct file. Falling back to original download.`,
+          );
+          await downloadBatchItem(row, false, 'pdf');
+          return;
+        }
+        throw new Error(message || `Direct file download failed (${requestedFormat}).`);
       }
 
       const blob = await response.blob();
       const contentDisposition = response.headers.get('content-disposition') || '';
       const match = contentDisposition.match(/filename="?([^\"]+)"?/i);
       const fallbackName = row.title ? row.title.replace(/\s+/g, '-').toLowerCase() : 'clearpage-direct-file';
-      const filename = match?.[1] || `${fallbackName}.${batchFormat}`;
+      const filename = match?.[1] || `${fallbackName}.${requestedFormat}`;
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
@@ -276,7 +301,10 @@ export default function BatchPage() {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(objectUrl);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      if (response.headers.get('x-clearpage-fallback-format') === 'original' && requestedFormat !== 'pdf') {
+        setBatchRunMessage('Downloaded original file for one item because conversion was unavailable.');
+      }
       return;
     }
 
@@ -284,7 +312,7 @@ export default function BatchPage() {
       method: 'POST',
       headers: buildHeaders(),
       body: JSON.stringify({
-        format: batchFormat,
+        format: requestedFormat,
         images: imagesRef.current,
         extractionId: row.extractionId,
         sourceUrl: row.sourceUrl || row.url,
@@ -294,14 +322,14 @@ export default function BatchPage() {
 
     if (!response.ok) {
       const raw = await response.text();
-      throw new Error(raw || `Export failed (${batchFormat}).`);
+      throw new Error(raw || `Export failed (${requestedFormat}).`);
     }
 
     const blob = await response.blob();
     const contentDisposition = response.headers.get('content-disposition') || '';
     const match = contentDisposition.match(/filename="?([^\"]+)"?/i);
     const fallbackName = row.title ? row.title.replace(/\s+/g, '-').toLowerCase() : 'clearpage-batch';
-    const filename = match?.[1] || `${fallbackName}.${batchFormat}`;
+    const filename = match?.[1] || `${fallbackName}.${requestedFormat}`;
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
@@ -309,7 +337,7 @@ export default function BatchPage() {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    URL.revokeObjectURL(objectUrl);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
   }
 
   async function getAllSuccessfulBatchRows(jobId: string): Promise<BatchItemResult[]> {
@@ -489,7 +517,13 @@ export default function BatchPage() {
             downloadEstimateText={formatDuration(batchDownloadEstimateMs)}
             runMessage={batchRunMessage}
             results={batchResults}
-            onDownloadOne={(row) => void downloadBatchItem(row)}
+            onDownloadOne={(row) =>
+              void downloadBatchItem(row).catch((error) =>
+                setBatchRunMessage(
+                  error instanceof Error ? error.message : 'Failed to download selected file.',
+                ),
+              )
+            }
             onDownloadAll={() => void handleDownloadAllBatch()}
           />
         </div>

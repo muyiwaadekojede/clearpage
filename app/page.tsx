@@ -142,7 +142,23 @@ export default function Page() {
     };
   }
 
-  async function downloadDirectFile(sourceUrl: string, format: ExportFormat): Promise<void> {
+  async function readErrorMessage(response: Response): Promise<string> {
+    const raw = await response.text();
+    if (!raw) return 'Direct file download failed.';
+
+    try {
+      const parsed = JSON.parse(raw) as { error?: string; details?: string };
+      return parsed.error || parsed.details || raw;
+    } catch {
+      return raw;
+    }
+  }
+
+  async function downloadDirectFile(
+    sourceUrl: string,
+    format: ExportFormat,
+    allowFallback = true,
+  ): Promise<void> {
     setDirectFileDownloading(true);
 
     try {
@@ -156,8 +172,15 @@ export default function Page() {
       });
 
       if (!response.ok) {
-        const raw = await response.text();
-        throw new Error(raw || 'Direct file download failed.');
+        const message = await readErrorMessage(response);
+
+        if (allowFallback && format !== 'pdf') {
+          setInputStatusMessage('Selected format unavailable right now. Downloading original file instead...');
+          await downloadDirectFile(sourceUrl, 'pdf', false);
+          return;
+        }
+
+        throw new Error(message || 'Direct file download failed.');
       }
 
       const blob = await response.blob();
@@ -171,7 +194,7 @@ export default function Page() {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(objectUrl);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 
       void trackClientEvent({
         eventName: 'direct_file_download_triggered',
@@ -181,6 +204,10 @@ export default function Page() {
         sourceUrl,
         exportFormat: format,
       });
+
+      if (response.headers.get('x-clearpage-fallback-format') === 'original' && format !== 'pdf') {
+        setInputStatusMessage('Converted file unavailable. Downloaded original file instead.');
+      }
     } finally {
       setDirectFileDownloading(false);
     }
@@ -237,7 +264,7 @@ export default function Page() {
           setInputStatusMessage('Direct file detected. Downloading as MD...');
           try {
             await downloadDirectFile(targetUrl, 'md');
-            setInputStatusMessage('Direct file downloaded as MD. Choose another format if needed.');
+            setInputStatusMessage('Direct file downloaded. Choose another format if needed.');
           } catch (downloadError) {
             console.error(downloadError);
             setInputStatusMessage('Direct file download failed. Choose a format and retry.');
@@ -301,10 +328,13 @@ export default function Page() {
     if (!directFileUrl) return;
 
     try {
+      setInputStatusMessage('');
       await downloadDirectFile(directFileUrl, directFileFormat);
     } catch (error) {
       console.error(error);
-      setInputStatusMessage('Direct file download failed. Try another format.');
+      setInputStatusMessage(
+        error instanceof Error ? error.message : 'Direct file download failed. Try another format.',
+      );
     }
   }
 
@@ -354,7 +384,7 @@ export default function Page() {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(objectUrl);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
 
       void trackClientEvent({
         eventName: 'export_result',

@@ -10,7 +10,8 @@ import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
 import { JSDOM } from 'jsdom';
 
-const DIRECT_FILE_TIMEOUT_MS = 45_000;
+const DIRECT_FILE_CONVERSION_TIMEOUT_MS = 120_000;
+const DIRECT_FILE_PASSTHROUGH_TIMEOUT_MS = 300_000;
 const MAX_DIRECT_FILE_BYTES = 60 * 1024 * 1024;
 const MAX_PDF_CONVERSION_PAGES = 120;
 const DEFAULT_DIRECT_FILE_FORMAT: ExportFormat = 'md';
@@ -119,6 +120,18 @@ function inferFileKind(input: { contentType: string; filename: string; bytes: Bu
   if (isDocxLike(input)) return 'docx';
   if (isTextLike(input)) return 'text';
   return 'unknown';
+}
+
+function isLikelyPdfFromMeta(input: { contentType: string; filename: string }): boolean {
+  const contentType = (input.contentType || '').toLowerCase();
+  if (contentType.includes('application/pdf') || contentType.includes('application/x-pdf')) return true;
+  return input.filename.toLowerCase().endsWith('.pdf');
+}
+
+function parseContentLength(value: string | null): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function normalizeExtractedPdfText(input: string): string {
@@ -235,15 +248,38 @@ async function buildConversionSource(input: {
   return null;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+async function streamResponseBodyToClient(input: {
+  response: Response;
+  res: NextApiResponse;
+  maxBytes: number;
+}): Promise<number> {
+  if (!input.response.body) {
+    input.res.end();
+    return 0;
+  }
+
+  const reader = input.response.body.getReader();
+  let sentBytes = 0;
 
   try {
-    return await fetch(url, { signal: controller.signal });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+
+      sentBytes += value.byteLength;
+      if (sentBytes > input.maxBytes) {
+        throw new Error('DIRECT_FILE_TOO_LARGE_STREAM');
+      }
+
+      input.res.write(Buffer.from(value));
+    }
   } finally {
-    clearTimeout(timeoutId);
+    reader.releaseLock();
   }
+
+  input.res.end();
+  return sentBytes;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -280,14 +316,62 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     exportFormat: format,
   });
 
+  const timeoutMs = format === 'pdf' ? DIRECT_FILE_PASSTHROUGH_TIMEOUT_MS : DIRECT_FILE_CONVERSION_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetchWithTimeout(sourceUrl, DIRECT_FILE_TIMEOUT_MS);
+    const response = await fetch(sourceUrl, {
+      signal: controller.signal,
+      redirect: 'follow',
+    });
 
     if (!response.ok) {
       return res.status(400).json({
         success: false,
         error: `Failed to fetch direct file (HTTP ${response.status}).`,
       });
+    }
+
+    const contentType = (response.headers.get('content-type') || 'application/octet-stream').toLowerCase();
+    const rawFilename = inferFilename(sourceUrl, response);
+    const safeBase = sanitizeFilename(stripExtension(rawFilename) || 'direct-file');
+    const currentExtension = extensionFromName(rawFilename) || '.bin';
+
+    if (format === 'pdf') {
+      const declaredBytes = parseContentLength(response.headers.get('content-length'));
+      if (declaredBytes !== null && declaredBytes > MAX_DIRECT_FILE_BYTES) {
+        return res.status(400).json({
+          success: false,
+          error: `Direct file exceeds ${Math.round(MAX_DIRECT_FILE_BYTES / (1024 * 1024))}MB size limit.`,
+        });
+      }
+
+      const isPdf = isLikelyPdfFromMeta({ contentType, filename: rawFilename });
+      const ext = isPdf ? '.pdf' : currentExtension;
+      res.setHeader('Content-Type', isPdf ? 'application/pdf' : contentType);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeBase}${ext}"`);
+      res.status(200);
+
+      const streamedBytes = await streamResponseBodyToClient({
+        response,
+        res,
+        maxBytes: MAX_DIRECT_FILE_BYTES,
+      });
+
+      trackAnalyticsEvent(req, {
+        eventName: 'api_direct_file_result',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+        metadata: {
+          mode: 'passthrough',
+          streamedBytes,
+        },
+      });
+      return;
     }
 
     const bytes = Buffer.from(await response.arrayBuffer());
@@ -298,28 +382,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
     }
 
-    const contentType = (response.headers.get('content-type') || 'application/octet-stream').toLowerCase();
-    const rawFilename = inferFilename(sourceUrl, response);
-    const safeBase = sanitizeFilename(stripExtension(rawFilename) || 'direct-file');
-    const currentExtension = extensionFromName(rawFilename) || '.bin';
     const fileKind = inferFileKind({ contentType, filename: rawFilename, bytes });
-    const isPdf = fileKind === 'pdf';
-
-    if (format === 'pdf') {
-      const ext = isPdf ? '.pdf' : currentExtension;
-      res.setHeader('Content-Type', isPdf ? 'application/pdf' : contentType);
-      res.setHeader('Content-Disposition', `attachment; filename="${safeBase}${ext}"`);
-      trackAnalyticsEvent(req, {
-        eventName: 'api_direct_file_result',
-        eventGroup: 'export',
-        status: 'success',
-        pagePath: '/',
-        sourceUrl,
-        exportFormat: format,
-      });
-      return res.status(200).send(bytes);
-    }
-
     const conversionSource = await buildConversionSource({
       fileKind,
       bytes,
@@ -329,10 +392,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
 
     if (!conversionSource) {
-      return res.status(400).json({
-        success: false,
-        error: 'This file type cannot be converted to MD/TXT/DOCX yet.',
+      res.setHeader('Content-Type', contentType || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeBase}${currentExtension}"`);
+      res.setHeader('x-clearpage-fallback-format', 'original');
+      trackAnalyticsEvent(req, {
+        eventName: 'api_direct_file_result',
+        eventGroup: 'export',
+        status: 'success',
+        pagePath: '/',
+        sourceUrl,
+        exportFormat: format,
+        metadata: {
+          fallback: 'original_file',
+          fallbackExtension: currentExtension,
+        },
       });
+      return res.status(200).send(bytes);
     }
 
     if (format === 'md') {
@@ -405,6 +480,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).send(docx);
   } catch (error) {
     const details = error instanceof Error ? error.message : 'Unexpected direct file error.';
+    const isAbort = error instanceof Error && error.name === 'AbortError';
+    const isTooLarge = details === 'DIRECT_FILE_TOO_LARGE_STREAM';
+    const statusCode = isTooLarge ? 400 : isAbort ? 504 : 500;
+    const errorMessage = isTooLarge
+      ? `Direct file exceeds ${Math.round(MAX_DIRECT_FILE_BYTES / (1024 * 1024))}MB size limit.`
+      : isAbort
+        ? 'Direct file request timed out.'
+        : 'Failed to process direct file URL.';
+
     trackAnalyticsEvent(req, {
       eventName: 'api_direct_file_result',
       eventGroup: 'export',
@@ -412,13 +496,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       pagePath: '/',
       sourceUrl,
       exportFormat: format,
-      errorCode: 'DIRECT_FILE_FAILED',
+      errorCode: isAbort ? 'DIRECT_FILE_TIMEOUT' : isTooLarge ? 'DIRECT_FILE_TOO_LARGE' : 'DIRECT_FILE_FAILED',
       errorMessage: details,
     });
-    return res.status(500).json({
+
+    if (res.headersSent) {
+      if (!res.writableEnded) {
+        res.destroy(error instanceof Error ? error : new Error(details));
+      }
+      return;
+    }
+
+    return res.status(statusCode).json({
       success: false,
-      error: 'Failed to process direct file URL.',
+      error: errorMessage,
       details: process.env.NODE_ENV === 'development' ? details : undefined,
     });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
