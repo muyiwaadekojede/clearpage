@@ -1,10 +1,4 @@
-import { PDFParse } from 'pdf-parse';
-import mammoth from 'mammoth';
-import { JSDOM } from 'jsdom';
-
-import { exportDocxBuffer } from '@/lib/exportDocx';
 import { buildMarkdownExport } from '@/lib/exportMarkdown';
-import { exportPdfBuffer } from '@/lib/exportPdf';
 import { buildTxtExport } from '@/lib/exportTxt';
 import { sanitizeFilename } from '@/lib/sanitise';
 import type { ExportFormat, ReaderSettings } from '@/lib/types';
@@ -51,6 +45,28 @@ export type ConversionSource = {
   textContent: string;
   htmlContent: string;
 };
+
+async function getPdfParseClass() {
+  const mod = await import('pdf-parse');
+  return mod.PDFParse;
+}
+
+async function getMammoth() {
+  return await import('mammoth');
+}
+
+async function getJSDOMClass() {
+  const mod = await import('jsdom');
+  return mod.JSDOM;
+}
+
+async function getDocxExporter() {
+  return await import('@/lib/exportDocx');
+}
+
+async function getPdfExporter() {
+  return await import('@/lib/exportPdf');
+}
 
 function escapeHtml(input: string): string {
   return input
@@ -147,7 +163,8 @@ function isHtmlLike(input: { contentType: string; filename: string; text: string
   return sample.includes('<html') || sample.includes('<body') || sample.includes('<p');
 }
 
-function htmlToText(html: string): string {
+async function htmlToText(html: string): Promise<string> {
+  const JSDOM = await getJSDOMClass();
   const dom = new JSDOM(html);
   try {
     return normalizeExtractedText(dom.window.document.body?.textContent || dom.window.document.documentElement.textContent || '');
@@ -165,6 +182,7 @@ export async function buildConversionSource(input: {
   const title = stripExtension(input.rawFilename) || 'Untitled Document';
 
   if (input.fileKind === 'pdf') {
+    const PDFParse = await getPdfParseClass();
     const parser = new PDFParse({ data: new Uint8Array(input.bytes) });
     let extractedText = '';
     let truncated = false;
@@ -191,6 +209,7 @@ export async function buildConversionSource(input: {
   }
 
   if (input.fileKind === 'docx') {
+    const mammoth = await getMammoth();
     const extracted = await mammoth.extractRawText({ buffer: input.bytes });
     const textContent = normalizeExtractedText(extracted.value || '');
     if (!textContent) return null;
@@ -209,7 +228,7 @@ export async function buildConversionSource(input: {
     if (isHtmlLike({ contentType: input.contentType, filename: input.rawFilename, text: decodedText })) {
       return {
         title,
-        textContent: htmlToText(decodedText),
+        textContent: await htmlToText(decodedText),
         htmlContent: decodedText,
       };
     }
@@ -319,6 +338,7 @@ export async function convertDocumentBuffer(input: {
   }
 
   if (input.format === 'docx') {
+    const { exportDocxBuffer } = await getDocxExporter();
     const docx = await exportDocxBuffer({
       title: source.title,
       byline: 'Unknown',
@@ -335,6 +355,7 @@ export async function convertDocumentBuffer(input: {
     };
   }
 
+  const { exportPdfBuffer } = await getPdfExporter();
   const pdf = await exportPdfBuffer({
     content: source.htmlContent,
     title: source.title,
