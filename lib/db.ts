@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-function resolveDataDir(): string {
+export function resolveDataDir(): string {
   const custom = process.env.CLEARPAGE_DATA_DIR?.trim();
   if (custom) return custom;
 
@@ -36,6 +36,16 @@ function openDatabase(): Database.Database {
 }
 
 const db = openDatabase();
+
+function hasColumn(tableName: string, columnName: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function ensureColumn(tableName: string, columnName: string, definition: string): void {
+  if (hasColumn(tableName, columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS feedback (
@@ -121,6 +131,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     session_id TEXT,
     status TEXT NOT NULL,
+    input_mode TEXT NOT NULL DEFAULT 'url',
     export_format TEXT NOT NULL,
     images_mode TEXT NOT NULL,
     settings_json TEXT,
@@ -149,6 +160,13 @@ db.exec(`
     extraction_id TEXT,
     source_url TEXT,
     title TEXT,
+    original_filename TEXT,
+    content_type TEXT,
+    byte_size INTEGER,
+    source_object_key TEXT,
+    output_object_key TEXT,
+    output_filename TEXT,
+    output_format TEXT,
     error_code TEXT,
     error_message TEXT,
     started_at TEXT,
@@ -156,6 +174,29 @@ db.exec(`
     FOREIGN KEY(job_id) REFERENCES batch_jobs(id)
   )
 `);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS batch_uploads (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    object_key TEXT NOT NULL,
+    object_url TEXT,
+    download_url TEXT,
+    original_filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  )
+`);
+
+ensureColumn('batch_jobs', 'input_mode', "TEXT NOT NULL DEFAULT 'url'");
+ensureColumn('batch_job_items', 'original_filename', 'TEXT');
+ensureColumn('batch_job_items', 'content_type', 'TEXT');
+ensureColumn('batch_job_items', 'byte_size', 'INTEGER');
+ensureColumn('batch_job_items', 'source_object_key', 'TEXT');
+ensureColumn('batch_job_items', 'output_object_key', 'TEXT');
+ensureColumn('batch_job_items', 'output_filename', 'TEXT');
+ensureColumn('batch_job_items', 'output_format', 'TEXT');
 
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_batch_jobs_status_created
@@ -170,6 +211,16 @@ db.exec(`
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_batch_items_job_status
   ON batch_job_items(job_id, status)
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_batch_uploads_created
+  ON batch_uploads(created_at)
+`);
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_batch_uploads_session
+  ON batch_uploads(session_id, created_at)
 `);
 
 export default db;

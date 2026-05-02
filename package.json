@@ -16,14 +16,16 @@
     "e2e:analytics": "node scripts/e2e-analytics.mjs",
     "e2e:public-metrics": "node scripts/e2e-public-metrics.mjs",
     "e2e:batch": "node scripts/e2e-batch.mjs",
+    "e2e:batch-documents": "node scripts/e2e-batch-documents.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "e2e:direct-file": "node scripts/e2e-direct-file.mjs",
-    "e2e:full": "npm run e2e:extract && npm run e2e:export && npm run e2e:batch && npm run e2e:public-metrics && npm run e2e:feedback && npm run e2e:ui && npm run e2e:direct-file && npm run e2e:analytics",
+    "e2e:full": "npm run e2e:extract && npm run e2e:export && npm run e2e:batch && npm run e2e:batch-documents && npm run e2e:public-metrics && npm run e2e:feedback && npm run e2e:ui && npm run e2e:direct-file && npm run e2e:analytics",
     "e2e:brand-matrix": "node scripts/e2e-brand-matrix.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
     "@sparticuz/chromium": "^147.0.2",
+    "@vercel/blob": "^2.3.3",
     "better-sqlite3": "^12.9.0",
     "docx": "^9.5.0",
     "isomorphic-dompurify": "^3.9.0",

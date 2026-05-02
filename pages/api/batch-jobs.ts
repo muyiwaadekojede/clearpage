@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { trackAnalyticsEvent } from '@/lib/analytics';
+import { cleanupBatchStorageArtifacts } from '@/lib/batchStorage';
 import {
   createBatchJob,
   enqueueBatchProcessing,
@@ -50,37 +51,68 @@ function parseUrlsFromBody(body: unknown): string[] {
   return [];
 }
 
+function parseFilesFromBody(body: unknown): Array<{ uploadId: string }> {
+  if (!body || typeof body !== 'object') return [];
+
+  const value = (body as { files?: unknown }).files;
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((item) => {
+      const uploadId =
+        item && typeof item === 'object' && 'uploadId' in item
+          ? String((item as { uploadId?: unknown }).uploadId || '').trim()
+          : '';
+      return { uploadId };
+    })
+    .filter((item) => item.uploadId.length > 0);
+}
+
 export default function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
+    void cleanupBatchStorageArtifacts();
     const sessionId = sessionFromHeader(req);
     const body = req.body as {
+      inputMode?: string;
       urls?: string[] | string;
+      files?: Array<{ uploadId: string }>;
       format?: string;
       images?: string;
       settings?: unknown;
     };
 
+    const inputMode = body?.inputMode === 'document' ? 'document' : 'url';
     const rawUrls = parseUrlsFromBody(body);
     const normalizedUrls = normalizeBatchUrls(rawUrls);
+    const files = parseFilesFromBody(body);
 
-    if (normalizedUrls.length === 0) {
+    if (inputMode === 'url') {
+      if (normalizedUrls.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'No valid HTTP/HTTPS URLs were provided.',
+        });
+      }
+
+      if (normalizedUrls.length > MAX_BATCH_JOB_URLS) {
+        return res.status(400).json({
+          success: false,
+          error: `Batch exceeds maximum of ${MAX_BATCH_JOB_URLS.toLocaleString()} URLs.`,
+        });
+      }
+    } else if (files.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'No valid HTTP/HTTPS URLs were provided.',
-      });
-    }
-
-    if (normalizedUrls.length > MAX_BATCH_JOB_URLS) {
-      return res.status(400).json({
-        success: false,
-        error: `Batch exceeds maximum of ${MAX_BATCH_JOB_URLS.toLocaleString()} URLs.`,
+        error: 'No uploaded files were provided.',
       });
     }
 
     try {
       const created = createBatchJob({
         sessionId,
+        inputMode,
         urls: normalizedUrls,
+        files,
         format: body?.format,
         images: body?.images,
         settings: body?.settings,
@@ -96,6 +128,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         metadata: {
           jobId: created.jobId,
           count: created.totalUrls,
+          inputMode,
           format: body?.format || 'md',
           images: body?.images || 'off',
         },
@@ -125,6 +158,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
   }
 
   if (req.method === 'GET') {
+    void cleanupBatchStorageArtifacts();
     const sessionId = sessionFromHeader(req);
     const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
 

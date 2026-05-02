@@ -1,5 +1,6 @@
 export type ImageMode = 'on' | 'off' | 'captions';
 export type ExportFormat = 'pdf' | 'txt' | 'md' | 'docx';
+export type BatchInputMode = 'url' | 'document';
 
 export type ExtractErrorCode =
   | 'FETCH_FAILED'
@@ -40,3 +41,7 @@ export interface ExtractErrorResponse {
 }
 
 export type ExtractResponse = ExtractSuccessResponse | ExtractErrorResponse;
+
+export interface BatchDocumentUploadInput {
+  uploadId: string;
+}

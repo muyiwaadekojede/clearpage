@@ -5,12 +5,20 @@ import { useRef } from 'react';
 import type { ExportFormat } from '@/lib/types';
 
 export type BatchItemResult = {
+  id?: number;
   url: string;
   status: 'pending' | 'running' | 'success' | 'failure';
   durationMs: number;
   extractionId?: string;
   sourceUrl?: string;
   title?: string;
+  originalFilename?: string;
+  contentType?: string;
+  byteSize?: number;
+  sourceObjectKey?: string;
+  outputObjectKey?: string;
+  outputFilename?: string;
+  outputFormat?: string;
   errorCode?: string;
   errorMessage?: string;
 };

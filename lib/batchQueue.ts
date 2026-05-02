@@ -1,9 +1,11 @@
 import crypto from 'crypto';
 
+import { cleanupBatchStorageArtifacts, getUploadedDocumentsByIds, readStoredObjectBuffer, storeOutputBuffer } from '@/lib/batchStorage';
 import db from '@/lib/db';
+import { convertDocumentBuffer, isSupportedDocumentFilename, MAX_DOCUMENT_BATCH_BYTES, MAX_DOCUMENT_BATCH_FILES } from '@/lib/documentConversion';
 import { storeExtractSnapshot } from '@/lib/extractCache';
 import { extractFromUrl } from '@/lib/extract';
-import type { ExportFormat, ExtractErrorCode, ImageMode, ReaderSettings } from '@/lib/types';
+import type { BatchDocumentUploadInput, BatchInputMode, ExportFormat, ExtractErrorCode, ImageMode, ReaderSettings } from '@/lib/types';
 
 export type BatchJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 export type BatchItemStatus = 'pending' | 'running' | 'success' | 'failure';
@@ -12,6 +14,7 @@ export type BatchJobRow = {
   id: string;
   sessionId: string | null;
   status: BatchJobStatus;
+  inputMode: BatchInputMode;
   exportFormat: ExportFormat;
   imagesMode: ImageMode;
   settingsJson: string | null;
@@ -38,6 +41,13 @@ export type BatchItemRow = {
   extractionId: string | null;
   sourceUrl: string | null;
   title: string | null;
+  originalFilename: string | null;
+  contentType: string | null;
+  byteSize: number | null;
+  sourceObjectKey: string | null;
+  outputObjectKey: string | null;
+  outputFilename: string | null;
+  outputFormat: string | null;
   errorCode: string | null;
   errorMessage: string | null;
   startedAt: string | null;
@@ -46,6 +56,12 @@ export type BatchItemRow = {
 
 export const MAX_BATCH_JOB_URLS = 50_000;
 const DEFAULT_MS_PER_URL = 9_000;
+const DEFAULT_DOCUMENT_SETTINGS: ReaderSettings = {
+  fontFace: 'serif',
+  fontSize: 16,
+  lineSpacing: 1.6,
+  colorTheme: 'light',
+};
 const BATCH_WORKER_CONCURRENCY = 3;
 const BATCH_ITEM_MAX_ATTEMPTS = 3;
 const BATCH_RETRY_BASE_DELAY_MS = 1_500;
@@ -143,6 +159,10 @@ export function normalizeBatchUrls(rawUrls: string[]): string[] {
   return urls;
 }
 
+function normalizeInputMode(value: unknown): BatchInputMode {
+  return value === 'document' ? 'document' : 'url';
+}
+
 function normalizeExportFormat(value: unknown): ExportFormat {
   if (value === 'txt' || value === 'md' || value === 'docx' || value === 'pdf') return value;
   return 'md';
@@ -183,11 +203,25 @@ function normalizeSettings(input: unknown): Partial<ReaderSettings> {
   return out;
 }
 
+function resolveReaderSettings(settingsJson: string | null): ReaderSettings {
+  if (!settingsJson) return DEFAULT_DOCUMENT_SETTINGS;
+
+  try {
+    return {
+      ...DEFAULT_DOCUMENT_SETTINGS,
+      ...normalizeSettings(JSON.parse(settingsJson) as unknown),
+    };
+  } catch {
+    return DEFAULT_DOCUMENT_SETTINGS;
+  }
+}
+
 function mapJobRow(row: Record<string, unknown>): BatchJobRow {
   return {
     id: String(row.id),
     sessionId: row.sessionId ? String(row.sessionId) : null,
     status: String(row.status) as BatchJobStatus,
+    inputMode: String(row.inputMode || 'url') as BatchInputMode,
     exportFormat: String(row.exportFormat) as ExportFormat,
     imagesMode: String(row.imagesMode) as ImageMode,
     settingsJson: row.settingsJson ? String(row.settingsJson) : null,
@@ -216,6 +250,13 @@ function mapItemRow(row: Record<string, unknown>): BatchItemRow {
     extractionId: row.extractionId ? String(row.extractionId) : null,
     sourceUrl: row.sourceUrl ? String(row.sourceUrl) : null,
     title: row.title ? String(row.title) : null,
+    originalFilename: row.originalFilename ? String(row.originalFilename) : null,
+    contentType: row.contentType ? String(row.contentType) : null,
+    byteSize: row.byteSize === null || row.byteSize === undefined ? null : Number(row.byteSize),
+    sourceObjectKey: row.sourceObjectKey ? String(row.sourceObjectKey) : null,
+    outputObjectKey: row.outputObjectKey ? String(row.outputObjectKey) : null,
+    outputFilename: row.outputFilename ? String(row.outputFilename) : null,
+    outputFormat: row.outputFormat ? String(row.outputFormat) : null,
     errorCode: row.errorCode ? String(row.errorCode) : null,
     errorMessage: row.errorMessage ? String(row.errorMessage) : null,
     startedAt: row.startedAt ? String(row.startedAt) : null,
@@ -231,6 +272,7 @@ export function getBatchJob(jobId: string): BatchJobRow | null {
         id,
         session_id AS sessionId,
         status,
+        input_mode AS inputMode,
         export_format AS exportFormat,
         images_mode AS imagesMode,
         settings_json AS settingsJson,
@@ -272,6 +314,13 @@ export function getBatchJobItems(jobId: string, limit: number, offset: number): 
         extraction_id AS extractionId,
         source_url AS sourceUrl,
         title,
+        original_filename AS originalFilename,
+        content_type AS contentType,
+        byte_size AS byteSize,
+        source_object_key AS sourceObjectKey,
+        output_object_key AS outputObjectKey,
+        output_filename AS outputFilename,
+        output_format AS outputFormat,
         error_code AS errorCode,
         error_message AS errorMessage,
         started_at AS startedAt,
@@ -287,9 +336,46 @@ export function getBatchJobItems(jobId: string, limit: number, offset: number): 
   return rows.map(mapItemRow);
 }
 
+export function getBatchJobItem(jobId: string, itemId: number): BatchItemRow | null {
+  const row = db
+    .prepare(
+      `
+      SELECT
+        id,
+        job_id AS jobId,
+        position,
+        url,
+        status,
+        duration_ms AS durationMs,
+        extraction_id AS extractionId,
+        source_url AS sourceUrl,
+        title,
+        original_filename AS originalFilename,
+        content_type AS contentType,
+        byte_size AS byteSize,
+        source_object_key AS sourceObjectKey,
+        output_object_key AS outputObjectKey,
+        output_filename AS outputFilename,
+        output_format AS outputFormat,
+        error_code AS errorCode,
+        error_message AS errorMessage,
+        started_at AS startedAt,
+        completed_at AS completedAt
+      FROM batch_job_items
+      WHERE job_id = ? AND id = ?
+      LIMIT 1
+      `,
+    )
+    .get(jobId, itemId) as Record<string, unknown> | undefined;
+
+  return row ? mapItemRow(row) : null;
+}
+
 export function createBatchJob(input: {
   sessionId: string | null;
-  urls: string[];
+  inputMode?: unknown;
+  urls?: string[];
+  files?: BatchDocumentUploadInput[];
   format: unknown;
   images: unknown;
   settings?: unknown;
@@ -299,8 +385,125 @@ export function createBatchJob(input: {
   status: BatchJobStatus;
   estimatedProcessingMs: number;
 } {
-  const urls = normalizeBatchUrls(input.urls);
+  const inputMode = normalizeInputMode(input.inputMode);
+  const now = nowIso();
+  const jobId = crypto.randomUUID();
+  const format = normalizeExportFormat(input.format);
+  const images = normalizeImageMode(input.images);
+  const settingsJson = JSON.stringify(normalizeSettings(input.settings));
 
+  if (inputMode === 'document') {
+    const uploadIds = Array.from(
+      new Set(
+        (input.files || [])
+          .map((file) => String(file?.uploadId || '').trim())
+          .filter(Boolean),
+      ),
+    );
+
+    if (uploadIds.length === 0) {
+      throw new Error('No uploaded files were provided for this batch.');
+    }
+
+    if (uploadIds.length > MAX_DOCUMENT_BATCH_FILES) {
+      throw new Error(`Batch exceeds maximum of ${MAX_DOCUMENT_BATCH_FILES.toLocaleString()} files.`);
+    }
+
+    const uploads = getUploadedDocumentsByIds(input.sessionId, uploadIds);
+    if (uploads.length !== uploadIds.length) {
+      throw new Error('One or more uploaded files are missing or unavailable for this session.');
+    }
+
+    const totalBytes = uploads.reduce((sum, upload) => sum + upload.byteSize, 0);
+    if (totalBytes > MAX_DOCUMENT_BATCH_BYTES) {
+      throw new Error('Combined uploaded files exceed the technical batch size limit.');
+    }
+
+    for (const upload of uploads) {
+      if (!isSupportedDocumentFilename(upload.originalFilename)) {
+        throw new Error(`Unsupported uploaded file type: ${upload.originalFilename}`);
+      }
+    }
+
+    const tx = db.transaction(() => {
+      db.prepare(
+        `
+        INSERT INTO batch_jobs (
+          id,
+          session_id,
+          status,
+          input_mode,
+          export_format,
+          images_mode,
+          settings_json,
+          total_urls,
+          processed_urls,
+          success_count,
+          failure_count,
+          average_duration_ms,
+          created_at,
+          started_at,
+          completed_at,
+          updated_at,
+          last_error_code,
+          last_error_message
+        )
+        VALUES (?, ?, 'queued', 'document', ?, ?, ?, ?, 0, 0, 0, NULL, ?, NULL, NULL, ?, NULL, NULL)
+        `,
+      ).run(jobId, input.sessionId, format, images, settingsJson, uploads.length, now, now);
+
+      const insertItem = db.prepare(
+        `
+        INSERT INTO batch_job_items (
+          job_id,
+          position,
+          url,
+          status,
+          duration_ms,
+          extraction_id,
+          source_url,
+          title,
+          original_filename,
+          content_type,
+          byte_size,
+          source_object_key,
+          output_object_key,
+          output_filename,
+          output_format,
+          error_code,
+          error_message,
+          started_at,
+          completed_at
+        )
+        VALUES (?, ?, ?, 'pending', 0, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL, ?, NULL, NULL, NULL, NULL)
+        `,
+      );
+
+      uploads.forEach((upload, index) => {
+        insertItem.run(
+          jobId,
+          index,
+          `upload://${upload.uploadId}`,
+          upload.originalFilename,
+          upload.contentType,
+          upload.byteSize,
+          upload.objectKey,
+          format,
+        );
+      });
+    });
+
+    tx();
+
+    return {
+      jobId,
+      totalUrls: uploads.length,
+      status: 'queued',
+      estimatedProcessingMs: uploads.length * DEFAULT_MS_PER_URL,
+    };
+  }
+
+  const urls = normalizeBatchUrls(input.urls || []);
   if (urls.length === 0) {
     throw new Error('No valid URLs were provided for this batch.');
   }
@@ -309,12 +512,6 @@ export function createBatchJob(input: {
     throw new Error(`Batch exceeds maximum of ${MAX_BATCH_JOB_URLS.toLocaleString()} URLs.`);
   }
 
-  const now = nowIso();
-  const jobId = crypto.randomUUID();
-  const format = normalizeExportFormat(input.format);
-  const images = normalizeImageMode(input.images);
-  const settingsJson = JSON.stringify(normalizeSettings(input.settings));
-
   const tx = db.transaction(() => {
     db.prepare(
       `
@@ -322,6 +519,7 @@ export function createBatchJob(input: {
         id,
         session_id,
         status,
+        input_mode,
         export_format,
         images_mode,
         settings_json,
@@ -337,7 +535,7 @@ export function createBatchJob(input: {
         last_error_code,
         last_error_message
       )
-      VALUES (?, ?, 'queued', ?, ?, ?, ?, 0, 0, 0, NULL, ?, NULL, NULL, ?, NULL, NULL)
+      VALUES (?, ?, 'queued', 'url', ?, ?, ?, ?, 0, 0, 0, NULL, ?, NULL, NULL, ?, NULL, NULL)
       `,
     ).run(jobId, input.sessionId, format, images, settingsJson, urls.length, now, now);
 
@@ -407,20 +605,40 @@ function claimNextQueuedJob(): { id: string } | null {
   return tx();
 }
 
-function claimNextPendingItem(jobId: string): { id: number; url: string } | null {
+function claimNextPendingItem(jobId: string): BatchItemRow | null {
   const now = nowIso();
   const tx = db.transaction(() => {
     const row = db
       .prepare(
         `
-        SELECT id, url
+        SELECT
+          id,
+          job_id AS jobId,
+          position,
+          url,
+          status,
+          duration_ms AS durationMs,
+          extraction_id AS extractionId,
+          source_url AS sourceUrl,
+          title,
+          original_filename AS originalFilename,
+          content_type AS contentType,
+          byte_size AS byteSize,
+          source_object_key AS sourceObjectKey,
+          output_object_key AS outputObjectKey,
+          output_filename AS outputFilename,
+          output_format AS outputFormat,
+          error_code AS errorCode,
+          error_message AS errorMessage,
+          started_at AS startedAt,
+          completed_at AS completedAt
         FROM batch_job_items
         WHERE job_id = ? AND status = 'pending'
         ORDER BY position ASC
         LIMIT 1
         `,
       )
-      .get(jobId) as { id: number; url: string } | undefined;
+      .get(jobId) as Record<string, unknown> | undefined;
 
     if (!row) return null;
 
@@ -432,7 +650,7 @@ function claimNextPendingItem(jobId: string): { id: number; url: string } | null
       `,
     ).run(now, row.id);
 
-    return row;
+    return mapItemRow(row);
   });
 
   return tx();
@@ -443,8 +661,11 @@ function markItemSuccess(input: {
   itemId: number;
   durationMs: number;
   extractionId: string | null;
-  sourceUrl: string;
+  sourceUrl: string | null;
   title: string;
+  outputObjectKey?: string | null;
+  outputFilename?: string | null;
+  outputFormat?: string | null;
 }): void {
   const now = nowIso();
 
@@ -458,12 +679,25 @@ function markItemSuccess(input: {
         extraction_id = ?,
         source_url = ?,
         title = ?,
+        output_object_key = ?,
+        output_filename = ?,
+        output_format = ?,
         error_code = NULL,
         error_message = NULL,
         completed_at = ?
       WHERE id = ?
       `,
-    ).run(input.durationMs, input.extractionId, input.sourceUrl, input.title, now, input.itemId);
+    ).run(
+      input.durationMs,
+      input.extractionId,
+      input.sourceUrl,
+      input.title,
+      input.outputObjectKey || null,
+      input.outputFilename || null,
+      input.outputFormat || null,
+      now,
+      input.itemId,
+    );
 
     db.prepare(
       `
@@ -505,6 +739,8 @@ function markItemFailure(input: {
         extraction_id = NULL,
         source_url = NULL,
         title = NULL,
+        output_object_key = NULL,
+        output_filename = NULL,
         error_code = ?,
         error_message = ?,
         completed_at = ?
@@ -571,25 +807,39 @@ function finalizeJob(jobId: string): void {
   ).run(status, done ? 1 : 0, now, now, jobId);
 }
 
-function getJobProcessingConfig(jobId: string): { imagesMode: ImageMode } | null {
+function getJobProcessingConfig(jobId: string): {
+  inputMode: BatchInputMode;
+  imagesMode: ImageMode;
+  exportFormat: ExportFormat;
+  settingsJson: string | null;
+  sessionId: string | null;
+} | null {
   const row = db
     .prepare(
       `
-      SELECT images_mode AS imagesMode
+      SELECT
+        input_mode AS inputMode,
+        images_mode AS imagesMode,
+        export_format AS exportFormat,
+        settings_json AS settingsJson,
+        session_id AS sessionId
       FROM batch_jobs
       WHERE id = ?
       LIMIT 1
       `,
     )
-    .get(jobId) as { imagesMode: ImageMode } | undefined;
+    .get(jobId) as {
+      inputMode: BatchInputMode;
+      imagesMode: ImageMode;
+      exportFormat: ExportFormat;
+      settingsJson: string | null;
+      sessionId: string | null;
+    } | undefined;
 
   return row || null;
 }
 
-async function runJob(jobId: string): Promise<void> {
-  const config = getJobProcessingConfig(jobId);
-  if (!config) return;
-
+async function runUrlJob(jobId: string, config: { imagesMode: ImageMode }): Promise<void> {
   while (true) {
     const item = claimNextPendingItem(jobId);
     if (!item) break;
@@ -668,9 +918,7 @@ async function runJob(jobId: string): Promise<void> {
       }
     }
 
-    if (completed) {
-      continue;
-    }
+    if (completed) continue;
 
     markItemFailure({
       jobId,
@@ -679,6 +927,79 @@ async function runJob(jobId: string): Promise<void> {
       errorCode: lastErrorCode,
       errorMessage: lastErrorMessage,
     });
+  }
+}
+
+async function runDocumentJob(
+  jobId: string,
+  config: { exportFormat: ExportFormat; settingsJson: string | null; sessionId: string | null },
+): Promise<void> {
+  const settings = resolveReaderSettings(config.settingsJson);
+
+  while (true) {
+    const item = claimNextPendingItem(jobId);
+    if (!item) break;
+
+    const startedAt = Date.now();
+
+    try {
+      if (!item.sourceObjectKey || !item.originalFilename || !item.contentType) {
+        throw new Error('Uploaded document metadata is incomplete.');
+      }
+
+      const bytes = await readStoredObjectBuffer(item.sourceObjectKey);
+      const converted = await convertDocumentBuffer({
+        bytes,
+        rawFilename: item.originalFilename,
+        contentType: item.contentType,
+        format: config.exportFormat,
+        sourceLabel: `upload://${item.originalFilename}`,
+        settings,
+      });
+
+      if (!converted.success) {
+        throw new Error('Uploaded file could not be converted to the selected format.');
+      }
+
+      const storedOutput = await storeOutputBuffer({
+        sessionId: config.sessionId,
+        filename: converted.filename,
+        contentType: converted.contentType,
+        buffer: converted.buffer,
+      });
+
+      markItemSuccess({
+        jobId,
+        itemId: item.id,
+        durationMs: Date.now() - startedAt,
+        extractionId: null,
+        sourceUrl: null,
+        title: converted.title,
+        outputObjectKey: storedOutput.objectKey,
+        outputFilename: converted.filename,
+        outputFormat: config.exportFormat,
+      });
+    } catch (error) {
+      markItemFailure({
+        jobId,
+        itemId: item.id,
+        durationMs: Date.now() - startedAt,
+        errorCode: 'DOCUMENT_CONVERSION_FAILED',
+        errorMessage: error instanceof Error ? error.message : 'Unexpected document conversion error.',
+      });
+    }
+  }
+}
+
+async function runJob(jobId: string): Promise<void> {
+  await cleanupBatchStorageArtifacts();
+  const config = getJobProcessingConfig(jobId);
+  if (!config) return;
+
+  if (config.inputMode === 'document') {
+    await runDocumentJob(jobId, config);
+  } else {
+    await runUrlJob(jobId, config);
   }
 
   finalizeJob(jobId);
