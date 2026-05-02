@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright';
 
-const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:3000';
 const sessionId = `e2e-batch-documents-${Date.now()}`;
 
 function fail(message) {

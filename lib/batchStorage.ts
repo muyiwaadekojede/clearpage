@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { del, get, head, put } from '@vercel/blob';
 import type { NextApiResponse } from 'next';
 
 import db, { resolveDataDir } from '@/lib/db';
@@ -42,6 +41,10 @@ declare global {
 
 const FILESYSTEM_ROOT = path.join(resolveDataDir(), 'batch-storage');
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+async function getBlobSdk() {
+  return await import('@vercel/blob');
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -111,6 +114,7 @@ async function removeStoredObject(objectKey: string): Promise<void> {
   }
 
   try {
+    const { del } = await getBlobSdk();
     await del(parsed.key);
   } catch {
     // Best-effort cleanup only.
@@ -190,6 +194,7 @@ export async function completeBlobUploadedFile(input: {
   await cleanupBatchStorageArtifacts();
   ensureBlobEnabled();
 
+  const { head } = await getBlobSdk();
   const blob = await head(input.pathname);
   return {
     objectKey: prefixedObjectKey('blob', blob.pathname),
@@ -285,6 +290,7 @@ export async function readStoredObjectBuffer(objectKey: string): Promise<Buffer>
   }
 
   ensureBlobEnabled();
+  const { get } = await getBlobSdk();
   const blob = await get(parsed.key, { access: 'private' });
   if (!blob || blob.statusCode !== 200 || !blob.stream) {
     throw new Error('Stored blob could not be read.');
@@ -335,6 +341,7 @@ export async function storeOutputBuffer(input: {
   }
 
   ensureBlobEnabled();
+  const { put } = await getBlobSdk();
   const blob = await put(relativePath, input.buffer, {
     access: 'private',
     addRandomSuffix: false,
@@ -367,6 +374,7 @@ export async function streamStoredObjectToResponse(input: {
   }
 
   ensureBlobEnabled();
+  const { get } = await getBlobSdk();
   const blob = await get(parsed.key, { access: 'private' });
   if (!blob || blob.statusCode !== 200 || !blob.stream) {
     throw new Error('Stored blob download is unavailable.');
