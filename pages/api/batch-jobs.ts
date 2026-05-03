@@ -1,7 +1,13 @@
+import crypto from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { trackAnalyticsEvent } from '@/lib/analytics';
 import { cleanupBatchStorageArtifacts } from '@/lib/batchStorage';
+import {
+  createDurableDocumentBatchJob,
+  getDurableDocumentBatchDetail,
+  shouldUseDurableDocumentBatchState,
+} from '@/lib/durableDocumentBatch';
 import {
   createBatchJob,
   enqueueBatchProcessing,
@@ -68,7 +74,7 @@ function parseFilesFromBody(body: unknown): Array<{ uploadId: string }> {
     .filter((item) => item.uploadId.length > 0);
 }
 
-export default function handler(req: NextApiRequest, res: NextApiResponse) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     void cleanupBatchStorageArtifacts();
     const sessionId = sessionFromHeader(req);
@@ -108,6 +114,36 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     }
 
     try {
+      if (inputMode === 'document' && shouldUseDurableDocumentBatchState()) {
+        const created = await createDurableDocumentBatchJob({
+          jobId: crypto.randomUUID(),
+          sessionId,
+          files,
+          format: body?.format === 'txt' || body?.format === 'md' || body?.format === 'docx' || body?.format === 'pdf' ? body.format : 'pdf',
+          images: body?.images === 'on' || body?.images === 'captions' || body?.images === 'off' ? body.images : 'off',
+          settings: body?.settings,
+        });
+
+        trackAnalyticsEvent(req, {
+          eventName: 'batch_job_created',
+          eventGroup: 'extract',
+          status: 'success',
+          pagePath: '/',
+          metadata: {
+            jobId: created.jobId,
+            count: created.totalUrls,
+            inputMode,
+            format: body?.format || 'md',
+            images: body?.images || 'off',
+          },
+        });
+
+        return res.status(202).json({
+          success: true,
+          job: created,
+        });
+      }
+
       const created = createBatchJob({
         sessionId,
         inputMode,
@@ -172,6 +208,32 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     const detail = getBatchJobDetail({ jobId, limit, offset });
 
     if (!detail) {
+      if (shouldUseDurableDocumentBatchState()) {
+        const durable = await getDurableDocumentBatchDetail({
+          jobId,
+          sessionId,
+          limit,
+          offset,
+        });
+
+        if (durable.kind === 'forbidden') {
+          return res.status(403).json({ success: false, error: durable.error });
+        }
+
+        if (durable.kind === 'ok') {
+          return res.status(200).json({
+            success: true,
+            job: durable.detail.job,
+            estimatedRemainingMs: durable.detail.estimatedRemainingMs,
+            items: durable.detail.items,
+            paging: {
+              limit: Math.max(1, Math.min(1000, Math.floor(limit) || 200)),
+              offset: Math.max(0, Math.floor(offset) || 0),
+            },
+          });
+        }
+      }
+
       return res.status(404).json({ success: false, error: 'Batch job not found.' });
     }
 

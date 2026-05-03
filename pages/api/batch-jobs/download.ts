@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { streamStoredObjectToResponse } from '@/lib/batchStorage';
+import { getDurableDocumentBatchItem, shouldUseDurableDocumentBatchState } from '@/lib/durableDocumentBatch';
 import { getBatchJob, getBatchJobItem } from '@/lib/batchQueue';
 
 function sessionFromHeader(req: NextApiRequest): string | null {
@@ -27,6 +28,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const item = getBatchJobItem(jobId, itemId);
 
   if (!job || !item) {
+    if (shouldUseDurableDocumentBatchState()) {
+      const durable = await getDurableDocumentBatchItem({
+        jobId,
+        itemId,
+        sessionId,
+      });
+
+      if (durable.kind === 'forbidden') {
+        return res.status(403).json({ success: false, error: durable.error });
+      }
+
+      if (durable.kind === 'ok') {
+        if (!durable.item.outputObjectKey || !durable.item.outputFilename || !durable.item.outputFormat) {
+          return res.status(400).json({ success: false, error: 'This batch item is not ready for download.' });
+        }
+
+        try {
+          await streamStoredObjectToResponse({
+            objectKey: durable.item.outputObjectKey,
+            response: res,
+            contentType:
+              durable.item.outputFormat === 'pdf'
+                ? 'application/pdf'
+                : durable.item.outputFormat === 'docx'
+                  ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                  : durable.item.outputFormat === 'md'
+                    ? 'text/markdown; charset=utf-8'
+                    : 'text/plain; charset=utf-8',
+            filename: durable.item.outputFilename,
+          });
+          return;
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: error instanceof Error ? error.message : 'Failed to stream batch output.',
+          });
+        }
+      }
+    }
+
     return res.status(404).json({ success: false, error: 'Batch job item not found.' });
   }
 

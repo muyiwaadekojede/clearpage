@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { completeBlobUploadedFile, registerCompletedUpload } from '@/lib/batchStorage';
+import { persistDurableUploadRecord } from '@/lib/durableDocumentBatch';
 
 function sessionFromHeader(req: NextApiRequest): string | null {
   const header = req.headers['x-clearpage-session'];
@@ -54,6 +55,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         contentType: stored.contentType,
         byteSize: stored.byteSize,
       });
+      await persistDurableUploadRecord({
+        uploadId: upload.uploadId,
+        sessionId,
+        objectKey: stored.objectKey,
+        objectUrl: stored.objectUrl,
+        downloadUrl: stored.downloadUrl,
+        originalFilename: stored.originalFilename,
+        contentType: stored.contentType,
+        byteSize: stored.byteSize,
+        createdAt: stored.createdAt,
+      });
 
       return res.status(200).json({ success: true, file: upload });
     }
@@ -83,6 +95,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       originalFilename: filename,
       contentType,
       byteSize,
+    });
+    await persistDurableUploadRecord({
+      uploadId: upload.uploadId,
+      sessionId,
+      objectKey,
+      objectUrl: typeof localBody.objectUrl === 'string' ? localBody.objectUrl : null,
+      downloadUrl: typeof localBody.downloadUrl === 'string' ? localBody.downloadUrl : null,
+      originalFilename: filename,
+      contentType,
+      byteSize,
+      createdAt: upload.createdAt,
     });
 
     return res.status(200).json({ success: true, file: upload });
