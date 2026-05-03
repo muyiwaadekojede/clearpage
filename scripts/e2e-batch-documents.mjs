@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { upload } from '@vercel/blob/client';
 import { chromium } from 'playwright';
 
 const baseUrl = process.env.BASE_URL || 'http://127.0.0.1:3000';
@@ -31,24 +32,62 @@ async function assertApiDocumentBatch(textPath) {
   }
 
   const configJson = await configResponse.json();
-  if (!configJson.success || configJson.mode !== 'filesystem') {
-    fail(`Expected filesystem upload mode for local E2E, got: ${JSON.stringify(configJson)}`);
+  if (!configJson.success || !['filesystem', 'blob'].includes(configJson.mode)) {
+    fail(`Unexpected upload config: ${JSON.stringify(configJson)}`);
   }
 
   const textBytes = await fs.readFile(textPath);
-  const uploadResponse = await fetch(
-    `${baseUrl}/api/batch-upload-local?sessionId=${encodeURIComponent(sessionId)}&filename=${encodeURIComponent('batch-note.txt')}&contentType=${encodeURIComponent('text/plain')}`,
-    {
-      method: 'PUT',
+  let completePayload;
+
+  if (configJson.mode === 'blob') {
+    const file = new File([textBytes], 'batch-note.txt', { type: 'text/plain' });
+    const pathname = `${sessionId}/api-batch-note.txt`;
+    const blob = await upload(pathname, file, {
+      access: 'private',
+      handleUploadUrl: `${baseUrl}/api/batch-upload-token`,
+      multipart: false,
+      contentType: 'text/plain',
+      clientPayload: JSON.stringify({
+        sessionId,
+        filename: 'batch-note.txt',
+        contentType: 'text/plain',
+        byteSize: textBytes.byteLength,
+      }),
       headers: {
-        'Content-Type': 'text/plain',
+        'x-clearpage-session': sessionId,
       },
-      body: textBytes,
-    },
-  );
-  const uploadJson = await uploadResponse.json();
-  if (!uploadResponse.ok || !uploadJson.success || !uploadJson.file?.objectKey) {
-    fail(`Local upload failed: ${uploadResponse.status} ${JSON.stringify(uploadJson)}`);
+    });
+
+    completePayload = {
+      mode: 'blob',
+      pathname: blob.pathname,
+      filename: 'batch-note.txt',
+    };
+  } else {
+    const uploadResponse = await fetch(
+      `${baseUrl}/api/batch-upload-local?sessionId=${encodeURIComponent(sessionId)}&filename=${encodeURIComponent('batch-note.txt')}&contentType=${encodeURIComponent('text/plain')}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/plain',
+        },
+        body: textBytes,
+      },
+    );
+    const uploadJson = await uploadResponse.json();
+    if (!uploadResponse.ok || !uploadJson.success || !uploadJson.file?.objectKey) {
+      fail(`Local upload failed: ${uploadResponse.status} ${JSON.stringify(uploadJson)}`);
+    }
+
+    completePayload = {
+      mode: 'filesystem',
+      objectKey: uploadJson.file.objectKey,
+      objectUrl: uploadJson.file.objectUrl,
+      downloadUrl: uploadJson.file.downloadUrl,
+      filename: uploadJson.file.originalFilename,
+      contentType: uploadJson.file.contentType,
+      byteSize: uploadJson.file.byteSize,
+    };
   }
 
   const completeResponse = await fetch(`${baseUrl}/api/batch-upload-complete`, {
@@ -57,15 +96,7 @@ async function assertApiDocumentBatch(textPath) {
       'Content-Type': 'application/json',
       'x-clearpage-session': sessionId,
     },
-    body: JSON.stringify({
-      mode: 'filesystem',
-      objectKey: uploadJson.file.objectKey,
-      objectUrl: uploadJson.file.objectUrl,
-      downloadUrl: uploadJson.file.downloadUrl,
-      filename: uploadJson.file.originalFilename,
-      contentType: uploadJson.file.contentType,
-      byteSize: uploadJson.file.byteSize,
-    }),
+    body: JSON.stringify(completePayload),
   });
   const completeJson = await completeResponse.json();
   if (!completeResponse.ok || !completeJson.success || !completeJson.file?.uploadId) {
