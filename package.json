@@ -17,6 +17,7 @@
     "e2e:public-metrics": "node scripts/e2e-public-metrics.mjs",
     "e2e:batch": "node scripts/e2e-batch.mjs",
     "e2e:batch-documents": "node scripts/e2e-batch-documents.mjs",
+    "e2e:batch-documents-real": "node scripts/e2e-batch-documents-real.mjs",
     "e2e:ui": "node scripts/e2e-ui.mjs",
     "e2e:direct-file": "node scripts/e2e-direct-file.mjs",
     "e2e:full": "npm run e2e:extract && npm run e2e:export && npm run e2e:batch && npm run e2e:batch-documents && npm run e2e:public-metrics && npm run e2e:feedback && npm run e2e:ui && npm run e2e:direct-file && npm run e2e:analytics",
