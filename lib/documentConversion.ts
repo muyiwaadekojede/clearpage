@@ -47,6 +47,23 @@ export type ConversionSource = {
 };
 
 async function getPdfParseClass() {
+  if (typeof (globalThis as { DOMMatrix?: unknown }).DOMMatrix === 'undefined') {
+    const canvas = await import('@napi-rs/canvas');
+    const globals = globalThis as {
+      DOMMatrix?: unknown;
+      DOMPoint?: unknown;
+      DOMRect?: unknown;
+      ImageData?: unknown;
+      Path2D?: unknown;
+    };
+
+    globals.DOMMatrix ??= canvas.DOMMatrix;
+    globals.DOMPoint ??= canvas.DOMPoint;
+    globals.DOMRect ??= canvas.DOMRect;
+    globals.ImageData ??= canvas.ImageData;
+    globals.Path2D ??= canvas.Path2D;
+  }
+
   const mod = await import('pdf-parse');
   return mod.PDFParse;
 }
